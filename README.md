@@ -39,8 +39,9 @@ The API starts on `http://localhost:3000` with the global prefix `/api` and URI
 versioning. Foundation endpoints:
 
 ```text
-GET /api/v1/health/live    -> liveness probe
-GET /api/v1/health/ready   -> readiness probe
+GET /api/v1/health/live    -> liveness probe (public)
+GET /api/v1/health/ready   -> readiness probe (public)
+GET /api/v1/auth/me        -> verified principal (requires Bearer token)
 GET /api/docs              -> Swagger UI (when SWAGGER_ENABLED=true)
 ```
 
@@ -74,8 +75,8 @@ pnpm start:dev        # watch-mode dev server
 ## Configuration
 
 Environment variables are typed, validated at startup and fail fast when invalid.
-See [`.env.example`](./.env.example) for the full list. Auth variables remain
-reserved for a later phase.
+See [`.env.example`](./.env.example) for the full list, including the Supabase
+authentication variables (Phase 3).
 
 ## Database (Phase 2)
 
@@ -156,3 +157,83 @@ passwords, cookies and authorization headers are never logged. Query logging is
 metadata-only (operation name, duration, sanitized SQLSTATE); raw SQL text is
 logged only when `DATABASE_LOG_QUERIES=true` (development), and parameters never
 are.
+
+## Authentication (Phase 3)
+
+The API is **secure by default**: a global authentication guard protects every
+route unless it is explicitly marked `@Public()` (currently only the health
+probes). Callers present a Supabase-issued access token as
+`Authorization: Bearer <token>`. The auth module lives in
+[`apps/backend/src/modules/auth`](./apps/backend/src/modules/auth) and performs
+token verification only — no authorization, tenant, or profile resolution (those
+belong to later phases).
+
+### How tokens are verified
+
+- Verification is **asymmetric** against the Supabase JWKS endpoint — no shared
+  secret is used or accepted. `jose` checks the signature, algorithm allow-list
+  (`RS256`/`ES256` by default; `HS*` and `none` are rejected), issuer, audience,
+  expiry and not-before.
+- The JWKS is fetched lazily and cached, with automatic key-rotation handling
+  (refetch on an unknown `kid`) and a bounded fetch timeout.
+- The verified identity is exposed to controllers as an immutable
+  `AuthenticatedPrincipal` (via the `@CurrentPrincipal()` decorator) carrying
+  only whitelisted identity claims (`userId`, `email`, `role`, `sessionId`,
+  `issuedAt`, `expiresAt`). Raw claims and the token are never surfaced.
+
+### Configure
+
+- `SUPABASE_URL` derives the issuer and JWKS URL. **In production it must be set
+  explicitly** (or the explicit `SUPABASE_JWT_ISSUER` / `SUPABASE_JWKS_URL`) —
+  the app fails fast when the JWKS URL cannot be resolved. Outside production it
+  defaults to the local Supabase stack (`http://127.0.0.1:54321`).
+- Audience, algorithms, clock tolerance, JWKS cache TTL and fetch timeout are
+  configurable (see `.env.example`).
+
+### Failure semantics
+
+Failures always **fail closed** and never act as a verification oracle:
+
+- `401 UNAUTHENTICATED` — missing or malformed `Authorization` header.
+- `401 TOKEN_EXPIRED` — the token is otherwise valid but expired (clients should
+  refresh). This is the only distinguished cryptographic outcome.
+- `401 TOKEN_INVALID` — every other verification failure (bad signature, unknown
+  key, wrong issuer/audience, disallowed algorithm, malformed token, missing
+  subject) collapses to a single generic code.
+- `503 DEPENDENCY_FAILURE` — the JWKS endpoint is unreachable; access is denied
+  because the server cannot verify credentials, not because they are invalid.
+
+`403` is never returned by authentication — it is reserved for authorization in
+a later phase.
+
+### The `GET /api/v1/auth/me` endpoint
+
+Returns the safe subset of the verified principal for the presented token. It
+does not resolve the profile record or any authorization data.
+
+```bash
+curl -H "Authorization: Bearer <access-token>" http://localhost:3000/api/v1/auth/me
+# { "success": true, "data": { "userId": "…", "email": "…", "role": "authenticated", "expiresAt": 1700000000 }, "requestId": "…" }
+```
+
+### Protecting routes in later phases
+
+Routes are protected automatically. Mark the rare public route with `@Public()`,
+and read the caller's identity with the parameter decorator:
+
+```ts
+import { Public } from '../../common/decorators/public.decorator';
+import { CurrentPrincipal } from '../auth/decorators/current-principal.decorator';
+import type { AuthenticatedPrincipal } from '../auth/authenticated-principal';
+
+@Get('me')
+me(@CurrentPrincipal() principal: AuthenticatedPrincipal) {
+  return { userId: principal.userId };
+}
+```
+
+### Never logged
+
+Access tokens, the `Authorization` header, and raw JWT claims are never logged.
+Authentication failures log only a sanitized internal reason, the request id,
+the HTTP status and the duration — never the token or credential material.

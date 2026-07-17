@@ -1,4 +1,5 @@
 import 'express';
+import type { AuthenticatedPrincipal } from '../modules/auth/authenticated-principal';
 
 declare module 'express' {
   interface Request {
@@ -7,5 +8,11 @@ declare module 'express' {
      * (and reused by the logger). Present for every request.
      */
     id?: string;
+
+    /**
+     * Verified authenticated principal attached by the authentication guard on
+     * protected routes. Absent on public routes.
+     */
+    principal?: AuthenticatedPrincipal;
   }
 }

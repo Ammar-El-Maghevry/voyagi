@@ -1,6 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
+import { Public } from '../../common/decorators/public.decorator';
 import {
   LivenessResponseDto,
   ReadinessResponseDto,
@@ -12,11 +13,13 @@ import {
 } from './health.service';
 
 /**
- * Health probes. Public and excluded from rate limiting so orchestrators can
- * poll them freely. Responses use the standard success envelope; readiness
- * returns 503 (via the exception filter) when a dependency is unavailable.
+ * Health probes. Public (no authentication) and excluded from rate limiting so
+ * orchestrators can poll them freely. Responses use the standard success
+ * envelope; readiness returns 503 (via the exception filter) when a dependency
+ * is unavailable.
  */
 @ApiTags('health')
+@Public()
 @SkipThrottle()
 @Controller({ path: 'health', version: '1' })
 export class HealthController {
