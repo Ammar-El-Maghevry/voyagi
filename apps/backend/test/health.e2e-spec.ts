@@ -36,16 +36,25 @@ describe('Health (e2e)', () => {
     expect(response.body.requestId.length).toBeGreaterThan(0);
   });
 
-  it('GET /api/v1/health/ready -> 200 with success envelope', async () => {
+  // Environment-tolerant: the real app reports readiness based on actual
+  // database availability. Both branches return a compliant envelope with a
+  // request id. Strict up/down mapping is covered deterministically in
+  // database-readiness.e2e-spec.ts.
+  it('GET /api/v1/health/ready -> compliant envelope reflecting DB state', async () => {
     const response = await request(app.getHttpServer()).get(
       '/api/v1/health/ready',
     );
 
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({
-      success: true,
-      data: { status: 'ok', checks: {} },
-    });
+    expect([200, 503]).toContain(response.status);
+    expect(typeof response.body.requestId).toBe('string');
+    if (response.status === 200) {
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.status).toBe('ok');
+      expect(typeof response.body.data.checks).toBe('object');
+    } else {
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.code).toBe('DEPENDENCY_FAILURE');
+    }
   });
 
   it('echoes the X-Request-Id response header', async () => {

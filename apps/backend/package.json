@@ -19,6 +19,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
+    "test:integration": "jest --config ./test/jest-integration.json",
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
@@ -32,6 +33,7 @@
     "class-validator": "^0.14.1",
     "helmet": "^8.0.0",
     "nestjs-pino": "^4.3.0",
+    "pg": "^8.13.1",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "reflect-metadata": "^0.2.2",
@@ -45,6 +47,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^9.1.0",
