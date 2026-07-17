@@ -7,6 +7,7 @@ import { configurations, validateEnvironment, type RateLimitConfig } from './con
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
 import { validationPipeOptions } from './common/validation/validation-pipe.options';
+import { DatabaseModule } from './infrastructure/database';
 import { buildPinoParams } from './infrastructure/logging/pino-logger.config';
 import { HealthModule } from './modules/health/health.module';
 
@@ -37,6 +38,7 @@ import { HealthModule } from './modules/health/health.module';
         return [{ ttl: rateLimit.ttl, limit: rateLimit.limit }];
       },
     }),
+    DatabaseModule,
     HealthModule,
   ],
   providers: [

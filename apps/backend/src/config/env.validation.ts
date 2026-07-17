@@ -84,6 +84,68 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SWAGGER_PATH?: string;
+
+  // --- Database (Phase 2) ---
+  // DATABASE_URL is validated for presence at pool creation (required in
+  // production; defaults to the local Supabase stack otherwise), so it is
+  // optional at the environment level.
+  @IsOptional()
+  @IsString()
+  DATABASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  DATABASE_APP_NAME?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  DATABASE_POOL_MIN?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  DATABASE_POOL_MAX?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  DATABASE_CONNECTION_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  DATABASE_IDLE_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  DATABASE_STATEMENT_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  DATABASE_READINESS_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @IsIn(['disable', 'require', 'no-verify', 'verify-ca', 'verify-full'])
+  DATABASE_SSL_MODE?: string;
+
+  @IsOptional()
+  @IsString()
+  DATABASE_LOG_QUERIES?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  DATABASE_SLOW_QUERY_MS?: number;
 }
 
 /**

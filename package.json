@@ -12,6 +12,7 @@
     "lint": "pnpm --filter @voyagi/backend run lint",
     "typecheck": "pnpm --filter @voyagi/backend run typecheck",
     "test": "pnpm --filter @voyagi/backend run test",
+    "test:integration": "pnpm --filter @voyagi/backend run test:integration",
     "test:e2e": "pnpm --filter @voyagi/backend run test:e2e",
     "start:dev": "pnpm --filter @voyagi/backend run start:dev"
   }
