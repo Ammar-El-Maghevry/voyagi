@@ -495,3 +495,23 @@ CREATE UNIQUE INDEX uq_route_open_price_period
   ON route_price_history (route_id)
   WHERE effective_to IS NULL;
 ```
+
+## Production hardening addendum
+
+Migration `20260717120000_013_production_hardening.sql` extends this frozen Phase 1 ERD without replacing existing fields:
+
+- `routes`: `distance_km numeric(8,2) NOT NULL DEFAULT 0`, `currency char(3) NOT NULL DEFAULT 'MRU'`.
+- `route_price_history`: `currency char(3) NOT NULL DEFAULT 'MRU'`.
+- `buses`: `current_odometer_km integer NOT NULL DEFAULT 0`, `version integer NOT NULL DEFAULT 1`.
+- `trips`: `currency char(3)`, nullable actual departure/arrival timestamps, and `version`.
+- `bookings`: analytics-only `booking_source`, `ticket_price_snapshot numeric(12,2)`, and `version`; `booking_channel` remains unchanged.
+- `agent_commission_transactions` and `vehicle_maintenance_records`: required three-letter currency snapshots.
+- `audit_logs`: nullable `device_type`, `operating_system`, and `browser`.
+- All application phone/contact columns use canonical validated international values.
+- `tickets` continues to store only `qr_token_hash`; raw QR tokens are never persisted.
+
+`booking_source_enum`: `APP`, `WEB`, `AGENT`, `ADMIN`, `API`.
+
+`booking_event_type_enum`: `BOOKING_CREATED`, `PAYMENT_PENDING`, `PAYMENT_CONFIRMED`, `CHECKED_IN`, `BOARDING`, `CANCELLED`, `REFUND_CREATED`, `REFUND_COMPLETED`.
+
+The append-only `booking_events` table contains a BIGINT identity key, tenant-safe `(booking_id, company_id)` foreign key, optional actor, typed event, event timestamp, optional JSON object metadata, and creation timestamp. RLS follows access to the parent booking.
