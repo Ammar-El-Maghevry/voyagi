@@ -1,0 +1,14 @@
+import { registerAs } from '@nestjs/config';
+import { parseBoolean } from './parse.util';
+
+/**
+ * Structured logging configuration namespace.
+ */
+export const loggingConfig = registerAs('logging', () => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  return {
+    level: process.env.LOG_LEVEL ?? (isProduction ? 'info' : 'debug'),
+    // Human-readable pretty printing is only appropriate outside production.
+    pretty: parseBoolean(process.env.LOG_PRETTY, !isProduction),
+  };
+});
