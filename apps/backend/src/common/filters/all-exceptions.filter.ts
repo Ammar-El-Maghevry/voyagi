@@ -85,14 +85,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private mapHttpException(exception: HttpException): MappedException {
     const status = exception.getStatus();
     const response = exception.getResponse();
-    const code = this.mapStatusToCode(status);
 
+    // Default to a stable, status-derived code; an exception may override it
+    // with an explicit stable `code` in its response body (e.g. auth errors
+    // distinguishing TOKEN_EXPIRED from TOKEN_INVALID).
+    let code: string = this.mapStatusToCode(status);
     // Prefer a developer-authored message; fall back to a safe generic one.
     let message = exception.message;
     let details: Record<string, unknown> | undefined;
 
     if (typeof response === 'object' && response !== null) {
       const record = response as Record<string, unknown>;
+      if (typeof record.code === 'string' && record.code.length > 0) {
+        code = record.code;
+      }
       if (typeof record.message === 'string') {
         message = record.message;
       } else if (Array.isArray(record.message)) {

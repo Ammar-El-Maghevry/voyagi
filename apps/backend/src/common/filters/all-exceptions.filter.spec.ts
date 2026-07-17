@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ErrorCode } from '../errors/error-code.enum';
 import type { ApiErrorResponse } from '../interfaces/api-response.interface';
@@ -110,5 +111,31 @@ describe('AllExceptionsFilter', () => {
     expect(payload.error.code).toBe(ErrorCode.INTERNAL_ERROR);
     expect(payload.error.message).toBe('An unexpected error occurred.');
     expect(JSON.stringify(payload)).not.toContain('hunter2');
+  });
+
+  it('honors an explicit stable code from the exception response', () => {
+    const { host, getPayload, getStatus } = createHost();
+
+    // e.g. an authentication error distinguishing expiry from invalidity.
+    filter.catch(
+      new UnauthorizedException({
+        code: 'TOKEN_EXPIRED',
+        message: 'The access token has expired.',
+      }),
+      host,
+    );
+
+    expect(getStatus()).toBe(401);
+    const payload = getPayload();
+    expect(payload.error.code).toBe('TOKEN_EXPIRED');
+    expect(payload.error.message).toBe('The access token has expired.');
+  });
+
+  it('falls back to the status-derived code when none is provided', () => {
+    const { host, getPayload } = createHost();
+
+    filter.catch(new UnauthorizedException('Nope'), host);
+
+    expect(getPayload().error.code).toBe(ErrorCode.UNAUTHENTICATED);
   });
 });

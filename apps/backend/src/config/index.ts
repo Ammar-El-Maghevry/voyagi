@@ -1,5 +1,6 @@
 import type { ConfigType } from '@nestjs/config';
 import { appConfig } from './app.config';
+import { authConfig } from './auth.config';
 import { corsConfig } from './cors.config';
 import { databaseConfig } from './database.config';
 import { loggingConfig } from './logging.config';
@@ -7,6 +8,11 @@ import { rateLimitConfig } from './rate-limit.config';
 import { swaggerConfig } from './swagger.config';
 
 export { appConfig, GLOBAL_API_PREFIX, DEFAULT_API_VERSION } from './app.config';
+export {
+  authConfig,
+  LOCAL_SUPABASE_URL,
+  DEFAULT_JWT_ALGORITHMS,
+} from './auth.config';
 export { corsConfig } from './cors.config';
 export {
   databaseConfig,
@@ -27,6 +33,7 @@ export {
  */
 export const configurations = [
   appConfig,
+  authConfig,
   corsConfig,
   databaseConfig,
   loggingConfig,
@@ -36,6 +43,7 @@ export const configurations = [
 
 /** Strongly-typed views over each configuration namespace. */
 export type AppConfig = ConfigType<typeof appConfig>;
+export type AuthConfig = ConfigType<typeof authConfig>;
 export type CorsConfig = ConfigType<typeof corsConfig>;
 export type DatabaseConfig = ConfigType<typeof databaseConfig>;
 export type LoggingConfig = ConfigType<typeof loggingConfig>;

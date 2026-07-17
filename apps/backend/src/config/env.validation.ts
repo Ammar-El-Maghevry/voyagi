@@ -146,6 +146,54 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(0)
   DATABASE_SLOW_QUERY_MS?: number;
+
+  // --- Supabase Auth (Phase 3) ---
+  // Signature verification is asymmetric via the Supabase JWKS endpoint. The
+  // issuer/JWKS URL default from SUPABASE_URL; production presence is enforced
+  // when the key resolver is created, so these are optional at the env level.
+  @IsOptional()
+  @IsString()
+  SUPABASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  SUPABASE_JWT_ISSUER?: string;
+
+  @IsOptional()
+  @IsString()
+  SUPABASE_JWKS_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  SUPABASE_JWT_AUDIENCE?: string;
+
+  @IsOptional()
+  @IsString()
+  SUPABASE_JWT_ALGORITHMS?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  AUTH_CLOCK_TOLERANCE_SECONDS?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  AUTH_JWKS_CACHE_TTL_MS?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  AUTH_JWKS_TIMEOUT_MS?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  AUTH_JWKS_COOLDOWN_MS?: number;
 }
 
 /**

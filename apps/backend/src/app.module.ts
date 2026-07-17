@@ -9,6 +9,8 @@ import { ResponseEnvelopeInterceptor } from './common/interceptors/response-enve
 import { validationPipeOptions } from './common/validation/validation-pipe.options';
 import { DatabaseModule } from './infrastructure/database';
 import { buildPinoParams } from './infrastructure/logging/pino-logger.config';
+import { AuthModule } from './modules/auth/auth.module';
+import { AuthenticationGuard } from './modules/auth/authentication.guard';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -39,13 +41,16 @@ import { HealthModule } from './modules/health/health.module';
       },
     }),
     DatabaseModule,
+    AuthModule,
     HealthModule,
   ],
   providers: [
     { provide: APP_PIPE, useValue: new ValidationPipe(validationPipeOptions) },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
+    // Rate limiting runs first, then authentication (secure by default).
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useExisting: AuthenticationGuard },
   ],
 })
 export class AppModule {}
