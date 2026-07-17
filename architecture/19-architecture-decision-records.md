@@ -1,8 +1,8 @@
 # Voyagi Architecture Decision Records
 
-**Status:** Accepted  
-**Version:** 1.0  
-**Applies to:** Voyagi platform  
+**Status:** Accepted<br>
+**Version:** 1.0<br>
+**Applies to:** Voyagi platform<br>
 **Purpose:** Define how architectural decisions are proposed, reviewed, recorded, superseded, and maintained.
 
 ---
@@ -173,11 +173,11 @@ Use the following template:
 ```markdown
 # ADR-NNNN: Decision Title
 
-**Status:** Proposed  
-**Date:** YYYY-MM-DD  
-**Decision owners:**  
-**Technical area:**  
-**Related documents:**  
+**Status:** Proposed
+**Date:** YYYY-MM-DD
+**Decision owners:**
+**Technical area:**
+**Related documents:**
 
 ## Context
 

@@ -1,11 +1,11 @@
 # Voyagi Backend Architecture
 
-**Status:** Proposed  
-**Version:** 1.0  
-**Target:** Voyagi Backend v1  
-**Primary framework:** NestJS  
-**Database:** PostgreSQL on Supabase  
-**Architecture style:** Modular Monolith with pragmatic Clean Architecture  
+**Status:** Proposed<br>
+**Version:** 1.0<br>
+**Target:** Voyagi Backend v1<br>
+**Primary framework:** NestJS<br>
+**Database:** PostgreSQL on Supabase<br>
+**Architecture style:** Modular Monolith with pragmatic Clean Architecture<br>
 **Tenancy model:** Multi-tenant SaaS
 
 ---

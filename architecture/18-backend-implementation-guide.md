@@ -1,13 +1,13 @@
 # Voyagi Backend Implementation Guide
 
-**Status:** Proposed  
-**Version:** 1.0  
-**Applies to:** Voyagi Backend v1  
-**Primary framework:** NestJS  
-**Architecture reference:** `13-backend-architecture.md`  
-**API reference:** `14-api-design-standards.md`  
-**Coding reference:** `15-coding-standards.md`  
-**Security reference:** `16-security-architecture.md`  
+**Status:** Proposed<br>
+**Version:** 1.0<br>
+**Applies to:** Voyagi Backend v1<br>
+**Primary framework:** NestJS<br>
+**Architecture reference:** `13-backend-architecture.md`<br>
+**API reference:** `14-api-design-standards.md`<br>
+**Coding reference:** `15-coding-standards.md`<br>
+**Security reference:** `16-security-architecture.md`<br>
 **Testing reference:** `17-testing-strategy.md`
 
 ---

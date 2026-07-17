@@ -1,11 +1,11 @@
 # Voyagi API Design & Standards
 
-**Status:** Proposed  
-**Version:** 1.0  
-**Applies to:** Voyagi Backend API  
-**Base path:** `/api/v1`  
-**Primary style:** REST over HTTPS  
-**Documentation:** OpenAPI / Swagger  
+**Status:** Proposed<br>
+**Version:** 1.0<br>
+**Applies to:** Voyagi Backend API<br>
+**Base path:** `/api/v1`<br>
+**Primary style:** REST over HTTPS<br>
+**Documentation:** OpenAPI / Swagger
 
 ---
 
