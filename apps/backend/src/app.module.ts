@@ -11,6 +11,8 @@ import { DatabaseModule } from './infrastructure/database';
 import { buildPinoParams } from './infrastructure/logging/pino-logger.config';
 import { AuthModule } from './modules/auth/auth.module';
 import { AuthenticationGuard } from './modules/auth/authentication.guard';
+import { AuthorizationModule } from './modules/authorization/authorization.module';
+import { AuthorizationGuard } from './modules/authorization/authorization.guard';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -42,15 +44,18 @@ import { HealthModule } from './modules/health/health.module';
     }),
     DatabaseModule,
     AuthModule,
+    AuthorizationModule,
     HealthModule,
   ],
   providers: [
     { provide: APP_PIPE, useValue: new ValidationPipe(validationPipeOptions) },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
-    // Rate limiting runs first, then authentication (secure by default).
+    // Guards run in registration order: rate limiting, then authentication
+    // (secure by default), then authorization (permission enforcement).
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useExisting: AuthenticationGuard },
+    { provide: APP_GUARD, useClass: AuthorizationGuard },
   ],
 })
 export class AppModule {}
