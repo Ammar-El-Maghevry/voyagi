@@ -1,5 +1,6 @@
 import 'express';
 import type { AuthenticatedPrincipal } from '../modules/auth/authenticated-principal';
+import type { AuthorizationContext } from '../modules/authorization/authorization-context';
 
 declare module 'express' {
   interface Request {
@@ -14,5 +15,11 @@ declare module 'express' {
      * protected routes. Absent on public routes.
      */
     principal?: AuthenticatedPrincipal;
+
+    /**
+     * Authorization context attached by the authorization guard on routes that
+     * declare a permission requirement. Absent otherwise.
+     */
+    authorizationContext?: AuthorizationContext;
   }
 }

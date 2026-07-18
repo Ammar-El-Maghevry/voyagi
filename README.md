@@ -237,3 +237,103 @@ me(@CurrentPrincipal() principal: AuthenticatedPrincipal) {
 Access tokens, the `Authorization` header, and raw JWT claims are never logged.
 Authentication failures log only a sanitized internal reason, the request id,
 the HTTP status and the duration — never the token or credential material.
+
+## Authorization (Phase 4)
+
+Authorization is layered on top of authentication and enforced by a second
+global guard, the **authorization guard**, which runs after the authentication
+guard. The module lives in
+[`apps/backend/src/modules/authorization`](./apps/backend/src/modules/authorization)
+and decides access from **permissions** — it performs no authentication and, by
+design, does not trust any role or permission carried inside a token.
+
+> Phase 4 delivers the authorization **infrastructure** only. The database-backed
+> resolution of profiles and company memberships (which produces the real
+> permission set) is bound in a later phase. Until then a minimal default
+> resolver keeps the pipeline functional (see
+> [Context resolution](#context-resolution)).
+
+### Request pipeline
+
+```text
+Rate limit  →  Authentication guard  →  Authorization guard  →  Controller
+(429)          (401 / 503)              (403)
+```
+
+### Permission model
+
+Permissions are `resource.action` strings defined once in the central catalog
+[`permission.enum.ts`](./apps/backend/src/modules/authorization/permission.enum.ts)
+(e.g. `companies.read`, `bookings.cancel`, `payments.refund`). They are never
+written as inline string literals.
+
+### Declaring requirements
+
+Protect a route with `@RequirePermissions(...)`. Requirements declared on the
+controller and the handler **combine** (all are required). Routes with no
+requirement are reachable by any authenticated caller.
+
+```ts
+import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
+import { AuthorizationCtx } from '../authorization/decorators/authorization-context.decorator';
+import type { AuthorizationContext } from '../authorization/authorization-context';
+import { Permission } from '../authorization/permission.enum';
+
+@Get(':companyId/settings')
+@RequirePermissions(Permission.CompaniesRead)
+getSettings(@AuthorizationCtx() context: AuthorizationContext) {
+  return this.settings.forCompany(context.companyId);
+}
+```
+
+The guard resolves the caller's `AuthorizationContext` — `userId`, `profileId`,
+`companyId`, `membershipId`, `role`, `permissions` — attaches it to the request,
+and exposes it through the `@AuthorizationCtx()` parameter decorator. The active
+company (tenant) is taken from a `companyId` route parameter or the
+`X-Company-Id` header; it names which company the caller acts on and is **never**
+treated as proof of membership — the resolver must verify an active membership.
+
+For Swagger, a permission-protected endpoint should document its failure modes
+with `@ApiForbiddenResponse()` (and `@ApiBearerAuth('bearer')`, already applied
+where authentication is required), so the `403` contract appears in the OpenAPI
+document alongside the operation.
+
+### Policies
+
+Permission checks run through a small policy seam: an `AuthorizationPolicy`
+evaluates a resolved context to allow/deny, and the `PolicyEvaluator` composes
+policies conjunctively (deny wins, first denial short-circuits). This phase ships
+only the generic `PermissionPolicy`; business-specific policies (e.g. resource
+ownership) are added by their owning modules later without changing the guard.
+
+### Context resolution
+
+The guard resolves the context through the `AUTHORIZATION_CONTEXT_RESOLVER` port
+([`authorization-context-resolver.ts`](./apps/backend/src/modules/authorization/authorization-context-resolver.ts)).
+It is bound by default to a minimal
+[`DefaultAuthorizationContextResolver`](./apps/backend/src/modules/authorization/default-authorization-context.resolver.ts)
+that derives a valid context from the verified principal and grants **no**
+permissions — so the authorization layer is functional and secure out of the
+box without any Users/Memberships domain. Permission-protected routes therefore
+return a correct `403` decision rather than a "dependency unavailable" error.
+
+The identity/tenant phase replaces it purely through DI by binding a
+database-backed resolver (reading `profiles` and `company_memberships`) to the
+same token; a locally-provided binding takes precedence over the module default,
+and no other code changes.
+
+### Failure semantics
+
+Authorization always **fails closed** and never returns `401` (that belongs to
+authentication):
+
+- `403 FORBIDDEN` — the caller lacks a required permission, or no active
+  authorization context could be established (e.g. no active membership). The
+  response is intentionally generic; the specific missing permissions appear
+  only in the internal log reason, so the API is not a permission-enumeration
+  oracle.
+
+### Never logged
+
+Denials log only a sanitized internal reason (e.g. `permission_denied`) and the
+request id — never tokens, headers, or the caller's permission set.
