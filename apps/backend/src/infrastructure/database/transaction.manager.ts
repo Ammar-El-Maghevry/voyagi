@@ -67,7 +67,12 @@ export class TransactionManager {
     work: (tx: Transaction) => Promise<T>,
     options: TransactionOptions = {},
   ): Promise<T> {
-    const client = await this.pool.connect();
+    let client: PoolClient;
+    try {
+      client = await this.pool.connect();
+    } catch (error) {
+      throw this.errorMapper.toApplicationError(error);
+    }
     const tx = new Transaction(client, this.errorMapper);
     const startedAt = Date.now();
 

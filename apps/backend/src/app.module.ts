@@ -24,6 +24,8 @@ import { SeatLayoutsModule } from './modules/seat-layouts/seat-layouts.module';
 import { BusesModule } from './modules/buses/buses.module';
 import { RoutesModule } from './modules/routes/routes.module';
 import { TripsModule } from './modules/trips/trips.module';
+import { AvailabilityModule } from './modules/availability/availability.module';
+import { BookingsModule } from './modules/bookings/bookings.module';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -65,6 +67,8 @@ import { HealthModule } from './modules/health/health.module';
     BusesModule,
     RoutesModule,
     TripsModule,
+    AvailabilityModule,
+    BookingsModule,
     HealthModule,
   ],
   providers: [

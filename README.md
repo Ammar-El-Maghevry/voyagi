@@ -66,7 +66,7 @@ Run from the repository root (they delegate to `apps/backend`):
 pnpm lint             # ESLint
 pnpm typecheck        # tsc --noEmit
 pnpm test             # unit tests (Jest)
-pnpm test:integration # integration tests (real PostgreSQL; skips when none reachable)
+pnpm test:integration # integration tests against the local real PostgreSQL schema
 pnpm test:e2e         # end-to-end tests (Jest + supertest)
 pnpm build            # nest build
 pnpm start:dev        # watch-mode dev server
@@ -101,12 +101,16 @@ Start the local Supabase stack (PostgreSQL on port 54322), then:
 
 ```bash
 supabase start          # from the repo root; provides the local database
-pnpm test:integration   # runs against DATABASE_URL, skips cleanly if unreachable
+supabase db reset       # applies every migration to a disposable local database
+pnpm test:integration   # critical booking/availability suites fail if DB is unavailable
 ```
 
-Integration tests are **non-destructive**: they use a session-scoped `TEMP`
-table on a single pinned connection and leave no residue. They never touch the
-real schema, run migrations, or seed data.
+Feature integration tests exercise the real migrated schema. Most fixtures are
+wrapped in transactions and rolled back. Concurrency cases use separate
+connections and narrowly scoped cleanup; the booking suite rejects non-local
+database hosts so this cleanup cannot run against a shared or production database.
+Use a disposable local Supabase instance and run `supabase db reset` before the
+full database verification.
 
 ### Health readiness
 
@@ -764,9 +768,32 @@ takes an explicit executor and `companyId`; counts are company-filtered; RLS
 `trip_events_tenant_read`) is verified under the non-bypassing `authenticated`
 role. Malformed ids fail closed before PostgreSQL.
 
-### Deferred to Phase 10+
+## Phase 10–11: Availability and booking engine
 
-Passengers, availability, bookings, seat reservations/holds/locks, the
-`GET /trips/:tripId/seats` seat-availability endpoint (doc 18 suggests it, but it
-is seat-availability which depends on bookings), tickets, QR, payments, refunds,
-and notifications.
+Public discovery is implemented through `GET /trips/search`,
+`GET /trips/:tripId/availability`, and
+`GET /trips/:tripId/price-preview`. Search and preview use the scheduled trip's
+price snapshot; preview accepts a bounded passenger count and remains an estimate.
+Availability is read-only and privacy-safe: each seat exposes only its canonical
+id/label, semantic status, and the assigned booking passenger's advisory gender.
+
+Passenger and company booking APIs are implemented under `/bookings` and
+`/companies/:companyId/bookings`. Creation is one PostgreSQL transaction covering
+durable scoped idempotency, booking/passenger/seat rows, immutable price and
+cancellation-policy snapshots, and the initial append-only event. PostgreSQL's
+active-seat unique index is the final double-booking boundary. Company operations
+use permission/branch grants from the same membership entitlement; online-owner
+operations require both the authenticated owner and a `WEB`/`MOBILE_APP` channel.
+
+Doc 18 labels `GET/POST /passengers` as suggested endpoints, but the authoritative
+schema defines `passengers` as required children of a booking rather than reusable
+profiles. Passenger creation therefore occurs only inside the atomic booking
+transaction; standalone passenger CRUD is intentionally not exposed.
+
+`cancellation_policy_snapshot` is persisted and immutable, but its JSON keys and
+evaluation semantics are not defined by the architecture. Phase 11 therefore
+cancels only unpaid `HELD`/`PENDING_PAYMENT` bookings and does not invent refund
+deadlines or percentages. Confirmed cancellation remains deferred with refunds.
+Agent creation likewise creates a hold; cash confirmation, payments, tickets/QR,
+refunds, commissions, notifications, check-in/boarding, reports, analytics, and
+frontend/mobile implementation remain Phase 12+ work.

@@ -1,7 +1,10 @@
 import { Logger } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { DatabaseErrorMapper } from './database-error.mapper';
-import { UniqueConstraintViolationError } from './database.errors';
+import {
+  DatabaseConnectionError,
+  UniqueConstraintViolationError,
+} from './database.errors';
 import {
   IsolationLevel,
   TransactionManager,
@@ -36,6 +39,22 @@ function managerFor(client: FakeClient): TransactionManager {
 }
 
 describe('TransactionManager', () => {
+  it('translates pool acquisition failures to a dependency error', async () => {
+    const pool = {
+      connect: jest
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' })),
+    };
+    const manager = new TransactionManager(
+      pool as unknown as Pool,
+      new DatabaseErrorMapper(),
+    );
+
+    await expect(manager.run(async () => undefined)).rejects.toBeInstanceOf(
+      DatabaseConnectionError,
+    );
+  });
+
   it('commits on success and releases the client', async () => {
     const { client, release } = createClient();
     const manager = managerFor(client);

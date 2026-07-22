@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(51);
 
 select is(
   (select count(*)
@@ -215,13 +215,21 @@ select throws_ok(
   'a booking cannot point to another company trip'
 );
 
+insert into public.idempotency_records (
+  company_id, actor_user_id, operation, idempotency_key, request_fingerprint
+) values (
+  90001, '10000000-0000-0000-0000-000000000001',
+  'CREATE_PASSENGER_BOOKING', 'idem-a-1', repeat('a', 64)
+);
 select throws_ok(
-  $$insert into public.bookings (
-      booking_reference, trip_id, company_id, booking_channel, status,
-      subtotal_amount, total_amount, idempotency_key
-    ) values ('TEST-IDEM-DUP', 90001, 90001, 'WEB', 'DRAFT', 100, 100, 'idem-a-1')$$,
-  '23505', 'duplicate key value violates unique constraint "uq_bookings_idempotency_key"',
-  'booking idempotency keys are unique'
+  $$insert into public.idempotency_records (
+      company_id, actor_user_id, operation, idempotency_key, request_fingerprint
+    ) values (
+      90001, '10000000-0000-0000-0000-000000000001',
+      'CREATE_PASSENGER_BOOKING', 'idem-a-1', repeat('b', 64)
+    )$$,
+  '23505', 'duplicate key value violates unique constraint "uq_idempotency_scope"',
+  'idempotency keys are unique within caller, company, and operation scope'
 );
 
 insert into public.payments (
@@ -415,6 +423,52 @@ select throws_ok(
     ) values ('CLIENT-WRITE', 90001, 90001, 'WEB', 'DRAFT', 100, 100)$$,
   '42501', 'permission denied for table bookings',
   'authenticated clients cannot write bookings directly'
+);
+
+reset role;
+
+select ok(
+  exists (
+    select 1 from pg_catalog.pg_constraint
+    where conname = 'uq_idempotency_scope'
+      and conrelid = 'public.idempotency_records'::regclass
+  ),
+  'idempotency scope has a database unique constraint'
+);
+select ok(
+  to_regclass('public.idx_idempotency_expiry') is not null,
+  'idempotency expiration cleanup is indexed'
+);
+select ok(
+  exists (
+    select 1 from information_schema.triggers
+    where event_object_schema = 'public' and event_object_table = 'bookings'
+      and trigger_name = 'booking_snapshots_immutable'
+  ),
+  'booking snapshots have an immutable trigger'
+);
+select ok(
+  exists (
+    select 1 from information_schema.triggers
+    where event_object_schema = 'public' and event_object_table = 'passengers'
+      and trigger_name = 'passenger_snapshots_immutable'
+  ),
+  'booking passenger snapshots have an immutable trigger'
+);
+select ok(
+  exists (
+    select 1 from pg_catalog.pg_policies
+    where schemaname = 'public' and tablename = 'bookings'
+      and policyname = 'bookings_authorized_read'
+  ),
+  'booking owner and branch reads are protected by RLS policy'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.idempotency_records', 'SELECT')
+  and not has_table_privilege('authenticated', 'public.idempotency_records', 'INSERT')
+  and not has_table_privilege('authenticated', 'public.idempotency_records', 'UPDATE')
+  and not has_table_privilege('authenticated', 'public.idempotency_records', 'DELETE'),
+  'authenticated clients have no idempotency table privileges'
 );
 
 select * from finish();
