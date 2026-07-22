@@ -564,8 +564,9 @@ constraint names, stack traces, or cross-company existence.
 
 Cities/stations, seat layouts and fleet/buses arrive in Phase 7 (below); routes
 and pricing, and trips (with their `trip_status` state machine and scheduling
-rules) follow in later phases. Audit-log writing for branch/staff changes is
-deferred to the Audit phase — no audit infrastructure exists yet.
+rules) follow in later phases. Branch/staff audit coverage remains deferred, but
+the Phase 15 append-only audit platform is available for implemented operational
+and financial actions.
 
 ## Cities, Stations, Seat Layouts & Fleet (Phase 7)
 
@@ -890,7 +891,56 @@ lookup by unique `internal_reference`. RLS remains defense in depth: direct
 `authenticated` writes to `payments`/`tickets` are denied (`42501`) and
 `qr_token_hash` is never exposed by a DTO.
 
-Explicitly **not** implemented (Phase 14+): agent commissions (a `SUCCEEDED`
-payment writes no commission row), maintenance, notifications, audit platform,
-reports/analytics, partial refunds, QR image/PDF rendering, and any
-boarding-device APIs beyond the documented `validate` operation.
+### Maintenance & commissions
+
+Maintenance records are tenant-scoped at `GET`/`POST`
+`/api/v1/maintenance-records` and `PATCH /api/v1/maintenance-records/:recordId`.
+`X-Company-Id` selects the authorized tenant. A record begins `SCHEDULED` with a
+required half-open `[started_at, scheduled_ends_at)` window, then may only move
+to `IN_PROGRESS` or `CANCELLED`; in-progress work may only move to `COMPLETED`
+or `CANCELLED`. There is no reopening or generic status PATCH. One bus can have
+only one scheduled/in-progress record, and the database plus a shared bus-row
+lock prevents races with trip assignment. Starting work marks the bus
+`IN_MAINTENANCE`; closing restores `ACTIVE` only when no other active maintenance
+exists and never overwrites `OUT_OF_SERVICE` or `ARCHIVED`. Maintenance does not
+cancel trips or passenger bookings.
+
+`GET /api/v1/agent-commission-transactions` requires `commissions.read` and
+`X-Company-Id`. Managers read their company; agents read only transactions tied
+to their own active AGENT membership. A commission is created only after the
+database confirms an agent-created booking is `CONFIRMED`: its immutable snapshot
+uses `company_memberships.commission_rate`, `bookings.total_amount`,
+`round(base * rate / 100, 2)`, and the booking currency. The unique
+`(agent_membership_id, booking_id)` key makes settlement/webhook retries create
+at most one row. Financial identity, rate, basis, amount, currency, and creation
+time are immutable; lifecycle is limited to the documented `PENDING -> EARNED |
+CANCELLED` and `EARNED -> PAID | CANCELLED` transitions.
+
+Full refunds remain `SUCCEEDED -> REFUNDED` only. Cancellation/refund handling
+cancels `PENDING`/`EARNED` commission records only after authoritative database
+state is verified. A `PAID` commission is never changed, reversed, or paid out
+again: clawback and manual settlement are deliberately deferred, with no payout
+provider, settlement endpoint, negative adjustment, or partial-refund model.
+
+### Audit & observability
+
+`GET /api/v1/audit-logs` requires `audit.read` and `X-Company-Id`, is paginated,
+and returns a tenant-scoped allowlist. `audit_logs` is append-only at PostgreSQL
+level: neither updates nor deletes are allowed, and authenticated clients cannot
+insert rows. The transaction writer records curated maintenance and payment /
+commission state changes. It accepts only allowlisted JSON metadata and excludes
+passwords, tokens, authorization/cookie data, provider/webhook secrets,
+idempotency keys, QR material, card data, documents, phone numbers, passenger
+PII, and SQL parameters. Request/correlation values are persisted only when
+valid UUIDs; non-UUID request IDs remain available in structured logs but are
+stored as `NULL` in audit rows.
+
+Structured Pino logging retains request/correlation context and redacts secrets;
+slow HTTP requests emit a sanitized `slow_request` event controlled by
+`LOG_SLOW_REQUEST_MS`. `/api/v1/health/live` and `/api/v1/health/ready` retain
+their existing process and database-readiness semantics. No metrics backend,
+external monitoring vendor, retention policy, or alert threshold is introduced.
+
+Explicitly **not** implemented: notifications, reports/analytics, partial
+refunds, commission clawbacks/settlements, payout providers, QR image/PDF
+rendering, and boarding-device APIs beyond the documented `validate` operation.

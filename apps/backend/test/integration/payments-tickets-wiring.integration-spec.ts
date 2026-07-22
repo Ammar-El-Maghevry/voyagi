@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
+import { DatabaseAuthorizationContextResolver } from '../../src/modules/identity/database-authorization-context.resolver';
 import { BookingsService } from '../../src/modules/bookings/bookings.service';
 import { BOOKINGS_REPOSITORY } from '../../src/modules/bookings/bookings.repository';
 import { AvailabilityService } from '../../src/modules/availability/availability.service';
@@ -11,6 +12,16 @@ import {
 import { PAYMENTS_REPOSITORY } from '../../src/modules/payments/payments.repository';
 import { PostgresPaymentsRepository } from '../../src/modules/payments/postgres-payments.repository';
 import { PaymentsService } from '../../src/modules/payments/payments.service';
+import { CommissionsService } from '../../src/modules/commissions/commissions.service';
+import { COMMISSIONS_REPOSITORY } from '../../src/modules/commissions/commissions.repository';
+import { PostgresCommissionsRepository } from '../../src/modules/commissions/postgres-commissions.repository';
+import { MaintenanceService } from '../../src/modules/maintenance/maintenance.service';
+import { MAINTENANCE_REPOSITORY } from '../../src/modules/maintenance/maintenance.repository';
+import { MAINTENANCE_SCHEDULING_PORT } from '../../src/modules/maintenance/maintenance-scheduling.port';
+import { PostgresMaintenanceRepository } from '../../src/modules/maintenance/postgres-maintenance.repository';
+import { AuditService, AUDIT_WRITER, AuditWriter } from '../../src/modules/audit/audit.service';
+import { AUDIT_REPOSITORY } from '../../src/modules/audit/audit.repository';
+import { PostgresAuditRepository } from '../../src/modules/audit/postgres-audit.repository';
 import {
   PAYMENT_PROVIDERS,
   type PaymentProvider,
@@ -29,6 +40,7 @@ import {
 import { TICKETS_REPOSITORY } from '../../src/modules/tickets/tickets.repository';
 import { PostgresTicketsRepository } from '../../src/modules/tickets/postgres-tickets.repository';
 import { TicketsService } from '../../src/modules/tickets/tickets.service';
+import { TripsService } from '../../src/modules/trips/trips.service';
 import {
   IssueTicketUseCase,
   ValidateTicketUseCase,
@@ -83,18 +95,19 @@ describe('Payments & Tickets module wiring (integration)', () => {
     expect(moduleRef.get(AvailabilityService, opts)).toBeInstanceOf(AvailabilityService);
     expect(moduleRef.get(BOOKINGS_REPOSITORY, opts)).toBeDefined();
 
-    // No Phase 14+ provider was introduced.
-    const forbidden = [
-      'MaintenanceService',
-      'CommissionService',
-      'AgentCommissionService',
-      'NotificationService',
-      'AuditService',
-    ];
-    for (const name of forbidden) {
-      // An unknown token makes Nest throw — proving the provider was never wired.
-      expect(() => moduleRef.get(name, opts)).toThrow();
-    }
+    // Phase 14/15 production providers and their PostgreSQL adapters resolve.
+    expect(moduleRef.get(MaintenanceService, opts)).toBeInstanceOf(MaintenanceService);
+    expect(moduleRef.get(CommissionsService, opts)).toBeInstanceOf(CommissionsService);
+    expect(moduleRef.get(AuditService, opts)).toBeInstanceOf(AuditService);
+    expect(moduleRef.get(MAINTENANCE_REPOSITORY, opts)).toBeInstanceOf(PostgresMaintenanceRepository);
+    expect(moduleRef.get(COMMISSIONS_REPOSITORY, opts)).toBeInstanceOf(PostgresCommissionsRepository);
+    expect(moduleRef.get(AUDIT_REPOSITORY, opts)).toBeInstanceOf(PostgresAuditRepository);
+    expect(moduleRef.get(AUDIT_WRITER, opts)).toBeInstanceOf(AuditWriter);
+    expect(moduleRef.get(MAINTENANCE_SCHEDULING_PORT, opts)).toBeInstanceOf(MaintenanceService);
+    expect(moduleRef.get(TripsService, opts)).toBeInstanceOf(TripsService);
+    expect(moduleRef.get(DatabaseAuthorizationContextResolver, opts)).toBeInstanceOf(
+      DatabaseAuthorizationContextResolver,
+    );
 
     await moduleRef.close();
   });

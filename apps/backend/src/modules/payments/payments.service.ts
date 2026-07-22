@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { ResolvedPagination } from '../../common/pagination/pagination';
 import {
   DatabaseService,
@@ -7,6 +7,9 @@ import {
   UniqueConstraintViolationError,
 } from '../../infrastructure/database';
 import { Permission } from '../authorization/permission.enum';
+import { AUDIT_WRITER, type AuditWriterPort } from '../audit/audit.service';
+import { CommissionStatus } from '../commissions/commission-status';
+import { CommissionsService } from '../commissions/commissions.service';
 import { resolveEntitlements, type Entitlement } from '../identity/entitlements';
 import { isUuid, parsePositiveBigInt } from '../identity/identifier.util';
 import {
@@ -59,7 +62,9 @@ export class PaymentsService {
     private readonly db: DatabaseService,
     private readonly transactions: TransactionManager,
     private readonly references: PaymentReferenceGenerator,
+    private readonly commissions: CommissionsService,
     @Inject(PAYMENT_PROVIDERS) providers: readonly PaymentProvider[],
+    @Optional() @Inject(AUDIT_WRITER) private readonly audit?: AuditWriterPort,
   ) {
     this.providers = providers;
   }
@@ -298,6 +303,11 @@ export class PaymentsService {
         to: PaymentStatus.Refunded,
       });
       if (!refunded) throw new PaymentNotRefundableError();
+      const commission = await this.commissions.applyFullRefund(
+        tx,
+        locked.bookingId,
+        locked.companyId,
+      );
       await this.repository.appendBookingEvent(
         tx,
         locked.bookingId,
@@ -312,6 +322,25 @@ export class PaymentsService {
         actorUserId,
         'REFUND_COMPLETED',
       );
+      await this.audit?.append(tx, {
+        actorUserId,
+        companyId: locked.companyId,
+        action: 'PAYMENT_REFUNDED',
+        entityType: 'payment',
+        entityId: refunded.id,
+        oldValues: { status: PaymentStatus.Succeeded, paymentId: refunded.id },
+        newValues: { status: PaymentStatus.Refunded, paymentId: refunded.id },
+      });
+      if (commission?.status === CommissionStatus.Paid) {
+        await this.audit?.append(tx, {
+          actorUserId,
+          companyId: locked.companyId,
+          action: 'COMMISSION_MANUAL_RECONCILIATION_REQUIRED',
+          entityType: 'agent_commission_transaction',
+          entityId: commission.id,
+          newValues: { status: commission.status, commissionId: commission.id },
+        });
+      }
       return refunded;
     });
   }
@@ -411,6 +440,30 @@ export class PaymentsService {
       actorUserId,
       'PAYMENT_CONFIRMED',
     );
+    const commission = await this.commissions.createEligible(
+      tx,
+      locked.bookingId,
+      locked.companyId,
+    );
+    await this.audit?.append(tx, {
+      actorUserId,
+      companyId: locked.companyId,
+      action: 'PAYMENT_SUCCEEDED',
+      entityType: 'payment',
+      entityId: succeeded.id,
+      oldValues: { status: from, paymentId: succeeded.id },
+      newValues: { status: PaymentStatus.Succeeded, paymentId: succeeded.id },
+    });
+    if (commission?.status === CommissionStatus.Earned) {
+      await this.audit?.append(tx, {
+        actorUserId,
+        companyId: locked.companyId,
+        action: 'COMMISSION_EARNED',
+        entityType: 'agent_commission_transaction',
+        entityId: commission.id,
+        newValues: { status: commission.status, commissionId: commission.id },
+      });
+    }
     return succeeded;
   }
 

@@ -18,6 +18,7 @@ describe('pino request privacy', () => {
     };
     const request = {
       id: 'request-1',
+      correlationId: undefined,
       method: 'POST',
       url: '/api/v1/bookings',
       headers: { 'idempotency-key': 'private-key' },

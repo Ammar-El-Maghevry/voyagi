@@ -15,6 +15,7 @@ import {
   TripNotBookableError,
 } from './booking.errors';
 import type { BookingReferenceGenerator } from './booking-reference.generator';
+import type { AuditWriterPort } from '../audit/audit.service';
 import {
   BookingStatus,
   PassengerGender,
@@ -275,6 +276,33 @@ describe('BookingsService', () => {
     await expect(
       service.cancelOwnedBooking(OWNER, booking.id),
     ).rejects.toBeInstanceOf(BookingNotCancellableError);
+  });
+
+  it('audits a successful cancellation with only its terminal status', async () => {
+    const audit = { append: jest.fn().mockResolvedValue({}) } as unknown as AuditWriterPort;
+    service = new BookingsService(
+      repository,
+      {} as DatabaseService,
+      transactions,
+      undefined,
+      audit,
+    );
+    const booking = await service.createPassengerBooking(OWNER, 'cancel-audit-key', input());
+
+    await service.cancelOwnedBooking(OWNER, booking.id);
+
+    expect(audit.append).toHaveBeenCalledTimes(1);
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        actorUserId: OWNER,
+        companyId: booking.companyId,
+        action: 'BOOKING_CANCELLED',
+        entityType: 'booking',
+        entityId: booking.id,
+        newValues: { status: BookingStatus.Cancelled },
+      },
+    );
   });
 
   it.each([

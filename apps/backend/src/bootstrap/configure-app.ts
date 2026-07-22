@@ -3,8 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
-import type { AppConfig } from '../config';
+import type { AppConfig, LoggingConfig } from '../config';
+import { correlationIdMiddleware } from '../common/request-context/correlation-id.middleware';
 import { requestIdMiddleware } from '../common/request-context/request-id.middleware';
+import { slowRequestMiddleware } from '../common/request-context/slow-request.middleware';
 import { buildCorsOptions } from './cors';
 import { setupSwagger } from './swagger';
 
@@ -42,8 +44,11 @@ export function configureApp(app: NestExpressApplication): void {
     expressInstance.set('trust proxy', resolveTrustProxy(appConfig.trustProxy));
   }
 
-  // Correlation id must be assigned before anything else runs.
+  // Request and optional client correlation ids must be available to logging.
   app.use(requestIdMiddleware);
+  app.use(correlationIdMiddleware);
+  const logging = config.getOrThrow<LoggingConfig>('logging');
+  app.use(slowRequestMiddleware(logging.slowRequestMs, app.get(Logger)));
 
   // Security baseline.
   app.use(helmet());

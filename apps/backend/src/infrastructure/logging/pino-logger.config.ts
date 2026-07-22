@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Params } from 'nestjs-pino';
 import type { AppConfig, LoggingConfig } from '../../config';
+import { getCorrelationId } from '../../common/request-context/correlation-id.util';
 import { ensureRequestId } from '../../common/request-context/request-id.util';
 
 /**
@@ -25,9 +26,12 @@ export function buildPinoParams(config: ConfigService): Params {
           req as IncomingMessage & { id?: unknown },
           res as ServerResponse,
         ),
-      customProps: () => ({
+      customProps: (req) => ({
         environment: app.nodeEnv,
         service: app.name,
+        correlationId: getCorrelationId(
+          req as IncomingMessage & { correlationId?: unknown },
+        ),
       }),
       autoLogging: true,
       // Never log secrets: strip auth headers and cookies entirely.
@@ -40,8 +44,13 @@ export function buildPinoParams(config: ConfigService): Params {
         remove: true,
       },
       serializers: {
-        req(req: IncomingMessage & { id?: unknown }) {
-          return { id: req.id, method: req.method, url: req.url };
+        req(req: IncomingMessage & { id?: unknown; correlationId?: unknown }) {
+          return {
+            id: req.id,
+            correlationId: getCorrelationId(req),
+            method: req.method,
+            url: req.url,
+          };
         },
         res(res: ServerResponse) {
           return { statusCode: res.statusCode };

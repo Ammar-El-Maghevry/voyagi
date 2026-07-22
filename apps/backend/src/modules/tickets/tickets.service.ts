@@ -1,7 +1,8 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { ResolvedPagination } from '../../common/pagination/pagination';
 import { DatabaseService, TransactionManager } from '../../infrastructure/database';
 import { Permission } from '../authorization/permission.enum';
+import { AUDIT_WRITER, type AuditWriterPort } from '../audit/audit.service';
 import { resolveEntitlements, type Entitlement } from '../identity/entitlements';
 import { isUuid, parsePositiveBigInt } from '../identity/identifier.util';
 import {
@@ -32,6 +33,7 @@ export class TicketsService {
     private readonly db: DatabaseService,
     private readonly transactions: TransactionManager,
     private readonly tokens: TicketTokenService,
+    @Optional() @Inject(AUDIT_WRITER) private readonly audit?: AuditWriterPort,
   ) {}
 
   // --- Issuance ------------------------------------------------------------
@@ -191,6 +193,15 @@ export class TicketsService {
         actorUserId,
         'CHECKED_IN',
       );
+      await this.audit?.append(tx, {
+        actorUserId,
+        companyId: locked.companyId,
+        action: 'TICKET_VALIDATED',
+        entityType: 'ticket',
+        entityId: checked.id,
+        oldValues: { status: TicketStatus.Issued },
+        newValues: { status: TicketStatus.CheckedIn },
+      });
       return checked;
     });
   }

@@ -10,6 +10,7 @@ import { IDENTITY_REPOSITORY } from '../src/modules/identity/identity.repository
 import { MembershipRole } from '../src/modules/identity/membership-role';
 import { TRIPS_REPOSITORY } from '../src/modules/trips/trips.repository';
 import { TRIP_EVENTS_REPOSITORY } from '../src/modules/trips/trip-events.repository';
+import { MAINTENANCE_SCHEDULING_PORT } from '../src/modules/maintenance/maintenance-scheduling.port';
 import { InMemoryIdentityRepository } from './support/in-memory-identity.repository';
 import { InMemoryTripsRepository } from './support/in-memory-trips.repository';
 import { InMemoryTripEventsRepository } from './support/in-memory-trip-events.repository';
@@ -23,6 +24,7 @@ import {
 const inlineTransactions = {
   run: <T>(work: (tx: unknown) => Promise<T>): Promise<T> => work({}),
 };
+const noMaintenanceOverlap = { hasActiveMaintenanceOverlap: async (): Promise<boolean> => false };
 
 const DEP = '2026-03-01T08:00:00.000Z';
 const ARR = '2026-03-01T13:00:00.000Z';
@@ -76,6 +78,8 @@ describe('Trips (e2e)', () => {
       .useValue(eventsRepo)
       .overrideProvider(TransactionManager)
       .useValue(inlineTransactions)
+      .overrideProvider(MAINTENANCE_SCHEDULING_PORT)
+      .useValue(noMaintenanceOverlap)
       .compile();
 
     app = moduleRef.createNestApplication({ bufferLogs: true });

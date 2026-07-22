@@ -33,10 +33,11 @@ describe('role-permissions (documented matrix)', () => {
     expect([...ROLE_PERMISSIONS[MembershipRole.BranchEmployee]]).toEqual(READ_SET);
   });
 
-  it('grants an agent the read set plus documented booking creation only', () => {
+  it('grants an agent the read set plus booking creation and commission visibility', () => {
     expect([...ROLE_PERMISSIONS[MembershipRole.Agent]]).toEqual([
       ...READ_SET,
       Permission.BookingsCreate,
+      Permission.CommissionsRead,
     ]);
   });
 
@@ -81,9 +82,9 @@ describe('role-permissions (documented matrix)', () => {
       ]);
       // No duplicates.
       expect(new Set(combined).size).toBe(combined.length);
-      // Union = read set + the agent's bookings.create, and nothing more.
-      expect(new Set(combined)).toEqual(
-        new Set([...READ_SET, Permission.BookingsCreate]),
+       // Union = read set + the agent's documented additions, and nothing more.
+       expect(new Set(combined)).toEqual(
+        new Set([...READ_SET, Permission.BookingsCreate, Permission.CommissionsRead]),
       );
       // Every granted permission comes from at least one component role.
       const componentUnion = new Set([

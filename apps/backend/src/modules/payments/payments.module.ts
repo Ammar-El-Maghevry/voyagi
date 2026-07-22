@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module';
+import { CommissionsModule } from '../commissions/commissions.module';
 import {
   CompanyPaymentsController,
   PassengerPaymentsController,
@@ -29,6 +31,7 @@ const TEST_WEBHOOK_SECRET =
   process.env.PAYMENTS_TEST_WEBHOOK_SECRET ?? 'voyagi-test-webhook-secret';
 
 @Module({
+  imports: [CommissionsModule, AuditModule],
   controllers: [
     PassengerPaymentsController,
     CompanyPaymentsController,

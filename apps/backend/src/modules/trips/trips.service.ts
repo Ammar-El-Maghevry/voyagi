@@ -5,6 +5,10 @@ import { DatabaseService, TransactionManager } from '../../infrastructure/databa
 import type { DatabaseExecutor } from '../../infrastructure/database/database.types';
 import { parsePositiveBigInt } from '../identity/identifier.util';
 import { BusStatus } from '../buses/bus-status';
+import {
+  MAINTENANCE_SCHEDULING_PORT,
+  type MaintenanceSchedulingPort,
+} from '../maintenance/maintenance-scheduling.port';
 import { StaffType } from '../staff/staff-type';
 import {
   TripAssociationInvalidError,
@@ -49,6 +53,8 @@ export class TripsService {
     private readonly events: TripEventsRepository,
     private readonly db: DatabaseService,
     private readonly transactions: TransactionManager,
+    @Inject(MAINTENANCE_SCHEDULING_PORT)
+    private readonly maintenance: MaintenanceSchedulingPort,
   ) {}
 
   /** A page of the company's trips. */
@@ -102,12 +108,25 @@ export class TripsService {
       if (!route.isActive) {
         throw new TripAssociationInvalidError('The route is not active.');
       }
-      const bus = await this.trips.findBusAssignment(tx, normalizedCompanyId, busId);
+      // Maintenance changes lock this row too. Lock before either schedule check
+      // so a trip and a maintenance operation cannot pass concurrently.
+      const bus = await this.trips.lockBusAssignment(tx, normalizedCompanyId, busId);
       if (!bus) {
         throw new TripAssociationInvalidError('The bus was not found in this company.');
       }
       if (!bus.isActive || bus.status !== BusStatus.Active) {
         throw new TripAssociationInvalidError('The bus is not active and operational.');
+      }
+      if (
+        await this.maintenance.hasActiveMaintenanceOverlap(
+          tx,
+          normalizedCompanyId,
+          busId,
+          input.departureTime,
+          input.estimatedArrivalTime,
+        )
+      ) {
+        throw new TripAssociationInvalidError('The bus has overlapping active maintenance.');
       }
 
       // Validate driver/assistant in the same transaction: same company, not
@@ -180,7 +199,33 @@ export class TripsService {
       if (typeof input.assistantId === 'string') {
         await this.assertStaff(tx, c, input.assistantId, StaffType.Assistant, 'assistant');
       }
-
+      const current = await this.trips.findInCompany(tx, c, t);
+      if (!current) {
+        throw new TripNotFoundError();
+      }
+      if (current.status !== TripStatus.Scheduled) {
+        throw new TripTransitionConflictError();
+      }
+      if (current.version !== expectedVersion) {
+        throw new TripVersionConflictError();
+      }
+      const bus = await this.trips.lockBusAssignment(tx, c, current.busId);
+      if (!bus || !bus.isActive || bus.status !== BusStatus.Active) {
+        throw new TripAssociationInvalidError('The bus is not active and operational.');
+      }
+      const departureTime = input.departureTime ?? current.departureTime;
+      const estimatedArrivalTime = input.estimatedArrivalTime ?? current.estimatedArrivalTime;
+      if (
+        await this.maintenance.hasActiveMaintenanceOverlap(
+          tx,
+          c,
+          current.busId,
+          departureTime,
+          estimatedArrivalTime,
+        )
+      ) {
+        throw new TripAssociationInvalidError('The bus has overlapping active maintenance.');
+      }
       const boardingClosesAt =
         input.departureTime !== undefined
           ? await this.computeBoardingClosesAt(tx, c, input.departureTime)
@@ -197,7 +242,8 @@ export class TripsService {
       if (updated) {
         return updated;
       }
-      // Nothing matched: separate "missing" from "not schedulable" from "stale".
+      // The pre-lock checks disambiguate normal misses; this covers a concurrent
+      // state/version change after the bus schedule was checked.
       const existing = await this.trips.findInCompany(tx, c, t);
       if (!existing) {
         throw new TripNotFoundError();

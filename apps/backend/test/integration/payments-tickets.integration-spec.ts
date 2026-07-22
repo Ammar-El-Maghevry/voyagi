@@ -3,6 +3,8 @@ import type { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { DatabaseService } from '../../src/infrastructure/database';
 import { DatabaseErrorMapper } from '../../src/infrastructure/database/database-error.mapper';
+import { AuditWriter } from '../../src/modules/audit/audit.service';
+import { PostgresAuditRepository } from '../../src/modules/audit/postgres-audit.repository';
 import type { DatabaseExecutor } from '../../src/infrastructure/database/database.types';
 import {
   Transaction,
@@ -10,6 +12,8 @@ import {
 } from '../../src/infrastructure/database/transaction.manager';
 import { BookingsService } from '../../src/modules/bookings/bookings.service';
 import { PostgresBookingsRepository } from '../../src/modules/bookings/postgres-bookings.repository';
+import { PostgresCommissionsRepository } from '../../src/modules/commissions/postgres-commissions.repository';
+import { CommissionsService } from '../../src/modules/commissions/commissions.service';
 import { PaymentsService } from '../../src/modules/payments/payments.service';
 import { PostgresPaymentsRepository } from '../../src/modules/payments/postgres-payments.repository';
 import { PaymentReferenceGenerator } from '../../src/modules/payments/payment-reference.generator';
@@ -92,6 +96,7 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       database,
       transactions,
       new PaymentReferenceGenerator(),
+      new CommissionsService(new PostgresCommissionsRepository(), database),
       [provider],
     );
     failingPayments = new PaymentsService(
@@ -99,6 +104,7 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       database,
       transactions,
       new PaymentReferenceGenerator(),
+      new CommissionsService(new PostgresCommissionsRepository(), database),
       [new FailingProvider()],
     );
     tickets = new TicketsService(
@@ -106,6 +112,7 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       database,
       transactions,
       new TicketTokenService(),
+      new AuditWriter(new PostgresAuditRepository()),
     );
 
     catalog = await transactions.run((tx) => seedCatalog(tx));
@@ -528,6 +535,29 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       [issued.seatReservationId],
     );
     expect(seat.rows[0].status).toBe('CHECKED_IN');
+    const audit = await pool.query<{
+      action: string;
+      entity_type: string;
+      entity_id: string;
+      old_values: Record<string, unknown> | null;
+      new_values: Record<string, unknown> | null;
+    }>(
+      `SELECT action, entity_type, entity_id, old_values, new_values
+         FROM public.audit_logs
+        WHERE company_id = $1 AND entity_type = 'ticket' AND entity_id = $2`,
+      [catalog.companyId, issued.id],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]).toEqual({
+      action: 'TICKET_VALIDATED',
+      entity_type: 'ticket',
+      entity_id: issued.id,
+      old_values: { status: 'ISSUED' },
+      new_values: { status: 'CHECKED_IN' },
+    });
+    expect(JSON.stringify(audit.rows[0])).not.toMatch(
+      /qr|token|passenger|phone|document|authorization|cookie|request|sql/i,
+    );
   });
 
   it('verifies a valid token and reports refunded bookings as invalid', async () => {
@@ -574,6 +604,7 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       ['public.bookings', 'bookings_no_delete'],
       ['public.payments', 'payments_no_delete'],
       ['public.tickets', 'tickets_no_delete'],
+      ['public.audit_logs', 'audit_logs_append_only'],
     ];
     for (const [table, trigger] of triggers) {
       await pool.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`).catch(() => undefined);
@@ -585,6 +616,7 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
         `DELETE FROM public.tickets WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`,
         [companyId],
       );
+      await pool.query(`DELETE FROM public.audit_logs WHERE company_id = $1`, [companyId]);
       await pool.query(`DELETE FROM public.payments WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`, [companyId]);
       await pool.query(`DELETE FROM public.booking_events WHERE company_id = $1`, [companyId]);
       await pool.query(`DELETE FROM public.seat_reservations WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`, [companyId]);

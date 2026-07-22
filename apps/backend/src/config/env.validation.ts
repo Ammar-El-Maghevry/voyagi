@@ -58,6 +58,12 @@ export class EnvironmentVariables {
   LOG_PRETTY?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  LOG_SLOW_REQUEST_MS?: number;
+
+  @IsOptional()
   @IsString()
   CORS_ORIGINS?: string;
 

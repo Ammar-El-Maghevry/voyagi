@@ -1,6 +1,9 @@
 /** Header carrying the request correlation id, inbound and outbound. */
 export const REQUEST_ID_HEADER = 'x-request-id';
 
+/** Optional trace correlation id, accepted and echoed only when it is a UUID. */
+export const CORRELATION_ID_HEADER = 'x-correlation-id';
+
 /**
  * Accepted shape for an incoming request id. Bounded and restricted to safe
  * characters to prevent header/log injection via a client-supplied value.
