@@ -5,11 +5,13 @@ import {
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   type PaginationParams,
-} from '../../../common/pagination/pagination';
+} from './pagination';
 
 /**
- * Shared bounded pagination query. Out-of-range values are normalized by
- * `resolvePagination`; validation here only rejects non-integer input.
+ * Shared bounded pagination query for collection endpoints. Out-of-range values
+ * are normalized by `resolvePagination`; validation here only rejects
+ * non-integer input. Matches the collection contract in
+ * `architecture/14-api-design-standards.md` (default page 1, size 20, max 100).
  */
 export class PaginationQueryDto implements PaginationParams {
   @ApiPropertyOptional({ minimum: 1, default: 1, description: '1-based page number.' })

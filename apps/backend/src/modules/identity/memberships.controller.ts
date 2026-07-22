@@ -16,7 +16,7 @@ import {
 import { CollectionResult } from '../../common/pagination/collection-result';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { Permission } from '../authorization/permission.enum';
-import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { PaginationQueryDto } from '../../common/pagination/pagination-query.dto';
 import { MembershipResponseDto } from './dto/membership-response.dto';
 import { IdentityService } from './identity.service';
 

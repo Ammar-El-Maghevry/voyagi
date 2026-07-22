@@ -16,6 +16,8 @@ import { AUTHORIZATION_CONTEXT_RESOLVER } from './modules/authorization/authoriz
 import { AuthorizationGuard } from './modules/authorization/authorization.guard';
 import { DatabaseAuthorizationContextResolver } from './modules/identity/database-authorization-context.resolver';
 import { IdentityModule } from './modules/identity/identity.module';
+import { BranchesModule } from './modules/branches/branches.module';
+import { StaffModule } from './modules/staff/staff.module';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -49,6 +51,8 @@ import { HealthModule } from './modules/health/health.module';
     AuthModule,
     AuthorizationModule,
     IdentityModule,
+    BranchesModule,
+    StaffModule,
     HealthModule,
   ],
   providers: [
