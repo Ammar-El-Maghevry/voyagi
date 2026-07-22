@@ -26,6 +26,8 @@ import { RoutesModule } from './modules/routes/routes.module';
 import { TripsModule } from './modules/trips/trips.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { BookingsModule } from './modules/bookings/bookings.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { TicketsModule } from './modules/tickets/tickets.module';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -69,6 +71,8 @@ import { HealthModule } from './modules/health/health.module';
     TripsModule,
     AvailabilityModule,
     BookingsModule,
+    PaymentsModule,
+    TicketsModule,
     HealthModule,
   ],
   providers: [

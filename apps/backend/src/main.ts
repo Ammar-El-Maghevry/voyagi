@@ -10,6 +10,9 @@ import { configureApp } from './bootstrap/configure-app';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
+    // Expose the raw request body so payment webhook signatures can be verified
+    // against the exact bytes the provider signed.
+    rawBody: true,
   });
 
   configureApp(app);
