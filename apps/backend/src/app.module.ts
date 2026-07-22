@@ -22,6 +22,8 @@ import { CitiesModule } from './modules/cities/cities.module';
 import { StationsModule } from './modules/stations/stations.module';
 import { SeatLayoutsModule } from './modules/seat-layouts/seat-layouts.module';
 import { BusesModule } from './modules/buses/buses.module';
+import { RoutesModule } from './modules/routes/routes.module';
+import { TripsModule } from './modules/trips/trips.module';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -61,6 +63,8 @@ import { HealthModule } from './modules/health/health.module';
     StationsModule,
     SeatLayoutsModule,
     BusesModule,
+    RoutesModule,
+    TripsModule,
     HealthModule,
   ],
   providers: [

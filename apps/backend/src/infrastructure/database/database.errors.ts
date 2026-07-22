@@ -46,6 +46,22 @@ export class ForeignKeyViolationError extends DatabaseError {
   }
 }
 
+/**
+ * Exclusion constraint violation (SQLSTATE 23P01) — a gist `EXCLUDE` overlap,
+ * e.g. overlapping route price periods or overlapping bus trip windows. It is a
+ * genuine conflict, so it maps to `409` like the other uniqueness/overlap errors.
+ */
+export class ExclusionConstraintViolationError extends DatabaseError {
+  constructor(cause?: unknown) {
+    super(
+      HttpStatus.CONFLICT,
+      'The requested change conflicts with an existing overlapping record.',
+      'EXCLUSION_VIOLATION',
+      cause,
+    );
+  }
+}
+
 /** Not-null violation (SQLSTATE 23502). */
 export class NotNullViolationError extends DatabaseError {
   constructor(cause?: unknown) {

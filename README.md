@@ -661,5 +661,112 @@ cross-company existence.
   permission or letting tenant roles mutate globally-shared data. Deferred
   pending a platform-admin authorization model.
 - The **`maintenance`** module and maintenance-driven bus `status` transitions.
-- Routes, pricing, trips, schedules, bookings, seat reservations/locks/holds,
-  tickets and payments (Phase 8+).
+- Routes and pricing (Phase 8) and trips (Phase 9) arrive below; bookings, seat
+  reservations/locks/holds, tickets and payments remain Phase 10+.
+
+## Routes, Pricing & Trips (Phases 8 + 9)
+
+Phases 8 (routes & pricing) and 9 (trips) are combined in one branch because
+trips depend directly on routes, pricing and fleet. They stay internally
+separated: a **routes** module hosting two distinct components (routes CRUD and
+append-only **route pricing**), and a **trips** module hosting **trips** plus the
+append-only **trip events** log. Each component has its own service, repository
+port, Postgres adapter, and domain types.
+
+### Endpoints
+
+| Method & path | Permission | Notes |
+| --- | --- | --- |
+| `GET/POST /api/v1/companies/:companyId/routes` | `routes.read` / `routes.manage` | Company-scoped; create validates active stations + seeds initial price. |
+| `GET/PATCH /api/v1/companies/:companyId/routes/:routeId` | `routes.read` / `routes.manage` | `404` cross-company; `422` invalid stations. |
+| `POST /api/v1/companies/:companyId/routes/:routeId/activate` \| `/deactivate` | `routes.manage` | `is_active` transition (`409` redundant). |
+| `GET /api/v1/companies/:companyId/routes/:routeId/price-history` | `routes.read` | Newest period first. |
+| `POST /api/v1/companies/:companyId/routes/:routeId/prices` | `routes.manage` | Appends a price (no dedicated pricing permission exists). |
+| `GET/POST /api/v1/companies/:companyId/trips` | `trips.read` / `trips.manage` | Company-scoped scheduling. |
+| `GET/PATCH /api/v1/companies/:companyId/trips/:tripId` | `trips.read` / `trips.manage` | Edit only while `SCHEDULED`; optimistic-locked. |
+| `POST /api/v1/companies/:companyId/trips/:tripId/start` \| `/complete` \| `/cancel` | `trips.manage` | Lifecycle transitions. |
+| `GET /api/v1/companies/:companyId/trips/:tripId/events` | `trips.read` | Append-only lifecycle log. |
+
+### Route ownership & pricing history
+
+Routes are company-scoped (`WHERE id = $1 AND company_id = $2`, composite unique
+`(company, origin, destination)`) over the **global** station catalog; origin and
+destination must be distinct, existing, active stations (`422` otherwise).
+Pricing is an **append-only history** (`route_price_history`) with a gist
+exclusion constraint (no overlapping periods) and a partial unique index (exactly
+one open period). A price change runs in one transaction that captures **one**
+boundary instant: the close stamps the old period's `effective_to` at
+`clock_timestamp()` and returns it, and the new period opens `effective_from`
+from that exact value — so `old.effective_to === new.effective_from` (no gap, no
+overlap; verified in an integration test). It also mirrors the new price onto
+`routes.default_price_mru` in the same transaction — never a destructive
+overwrite, and a mid-change failure rolls back both the history and the mirror.
+Route creation seeds the initial open period atomically. Under concurrency the
+partial-unique index guarantees exactly one open period always survives (never
+zero, never two). The history table has no `company_id`; ownership is always
+verified through the parent route first.
+
+### Trip ownership, associations & scheduling
+
+Trips are company-scoped (**no branch column** → `trips.manage` is company-wide,
+proven from the permission matrix; the Phase 5 branch-entitlement machinery is
+untouched). Composite foreign keys enforce **same-company** route/bus/driver/
+assistant at the database. Creation runs in a transaction that validates, with
+company-scoped in-transaction reads: the route (exists in company, active) and
+bus (active & `status = ACTIVE`); and the **driver/assistant** — same company,
+**not soft-deleted**, active, and of the exact type (`DRIVER`/`ASSISTANT`). That
+staff check is stricter than the database staff-type trigger (which ignores
+`deleted_at`) and yields a precise `422`. It then snapshots the route price onto
+the trip, computes `boarding_closes_at` from
+`company_settings.boarding_close_minutes` (default 30), inserts the trip, and
+appends a `TRIP_CREATED` event. A trip price snapshot means later route-price
+changes never alter a scheduled trip.
+
+**Bus schedule conflicts** are prevented by a new forward-only migration
+(`014`) adding a gist exclusion constraint
+`EXCLUDE (bus_id WITH =, tstzrange(departure, arrival, '[)') WITH &&) WHERE (is_active AND status <> 'CANCELLED')`
+— so live operational trips (`SCHEDULED`/`ONGOING`/`COMPLETED`) block overlaps,
+while a **cancelled** trip or a soft-removed trip (`is_active = false`; trips have
+no `deleted_at`, so `is_active` is their removal flag) **releases** its window.
+Concurrency-safe at the database (proven by a two-connection integration test:
+of two overlapping assignments, exactly one commits; and by cancelling a trip and
+re-scheduling in the freed window). The maintenance-overlap check (business rules
+§3) is deferred because the maintenance module is not yet implemented.
+
+### Lifecycle, optimistic locking & events
+
+The centralized transition matrix (`trip-transitions.ts`) is derived from doc 18's
+three lifecycle endpoints + `trip_status_enum`: `SCHEDULED → ONGOING` (start,
+stamps actual departure, event `DEPARTED`), `ONGOING → COMPLETED` (complete,
+stamps actual arrival, event `ARRIVED`), `SCHEDULED → CANCELLED` (cancel, event
+`CANCELLED`). `COMPLETED`/`CANCELLED` are terminal; an action from a wrong state
+is `409`, a missing/wrong-company trip is `404`. Transitions are atomic
+(conditional on current status) and bump `version`; each also appends its event
+in the same transaction. **`BOARDING` is intentionally not reachable in Phase 9**:
+the enum defines it (with `BOARDING_OPENED`/`BOARDING_CLOSED` events) for the
+later boarding/ticketing phase, and doc 18 documents no boarding action — so no
+transition enters it, and (to avoid referencing an unreachable state) no action
+lists it as a source either. Edits (`PATCH`) require `expectedVersion` — a
+mismatch is `409` —
+apply only while `SCHEDULED`, and recompute the boarding time when the departure
+moves. Actual times are server-controlled. `trip_events` are immutable (a trigger
+blocks update/delete) and exposed read-only.
+
+### Error semantics & tenant isolation
+
+`400` malformed · `401` unauthenticated · `403` missing tenant permission · `404`
+scoped resource absent/hidden · `409` duplicate / schedule overlap / stale version
+/ invalid transition (SQLSTATE `23P01` exclusion violations are now mapped to
+`409`) · `422` domain-invariant violation (inactive station/route/bus, invalid
+times/staff) · `503 DEPENDENCY_FAILURE` real outage. Every repository method
+takes an explicit executor and `companyId`; counts are company-filtered; RLS
+(`routes_tenant_read`, `route_prices_tenant_read`, `trips_tenant_read`,
+`trip_events_tenant_read`) is verified under the non-bypassing `authenticated`
+role. Malformed ids fail closed before PostgreSQL.
+
+### Deferred to Phase 10+
+
+Passengers, availability, bookings, seat reservations/holds/locks, the
+`GET /trips/:tripId/seats` seat-availability endpoint (doc 18 suggests it, but it
+is seat-availability which depends on bookings), tickets, QR, payments, refunds,
+and notifications.
