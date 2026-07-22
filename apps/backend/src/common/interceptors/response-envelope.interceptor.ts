@@ -8,6 +8,7 @@ import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import type { ApiSuccessResponse } from '../interfaces/api-response.interface';
+import { CollectionResult } from '../pagination/collection-result';
 import { getRequestId } from '../request-context/request-id.util';
 
 /** A value that already conforms to the success envelope shape. */
@@ -42,6 +43,16 @@ export class ResponseEnvelopeInterceptor<T>
 
     return next.handle().pipe(
       map((data) => {
+        // A paginated collection carries its own pagination metadata, hoisted
+        // to the envelope's top-level `meta`.
+        if (data instanceof CollectionResult) {
+          return {
+            success: true,
+            data: data.items as T,
+            meta: data.meta,
+            requestId,
+          };
+        }
         if (isEnvelope(data)) {
           return data as ApiSuccessResponse<T>;
         }

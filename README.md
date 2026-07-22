@@ -337,3 +337,143 @@ authentication):
 
 Denials log only a sanitized internal reason (e.g. `permission_denied`) and the
 request id — never tokens, headers, or the caller's permission set.
+
+## Identity — profiles & memberships (Phase 5)
+
+The [`identity` module](./apps/backend/src/modules/identity) implements the
+Users & Identity domain: it resolves an authenticated user to their backend
+profile and company memberships, and provides the **database-backed**
+authorization-context resolver that replaces the Phase 4 default.
+
+It reads the existing `profiles` and `company_memberships` tables only — no
+migrations were needed. Roles are the database `user_role_enum`; there is no
+separate permissions table, so permissions are derived from the role in the
+application layer.
+
+### Endpoints
+
+| Method & path | Auth | Notes |
+| --- | --- | --- |
+| `GET /api/v1/profiles/me` | authenticated | The caller's profile; `404` if none. |
+| `PATCH /api/v1/profiles/me` | authenticated | Updates `fullName` / `phoneNumber` only (the RLS-editable fields). |
+| `GET /api/v1/profiles/me/companies` | authenticated | Paginated list of companies the caller actively belongs to. |
+| `GET /api/v1/companies/:companyId/memberships` | `memberships.read` | Paginated, tenant-scoped list. |
+| `GET /api/v1/companies/:companyId/memberships/:membershipId` | `memberships.read` | Single membership, scoped to the company. |
+
+### Profile resolution
+
+The auth user id always comes from the verified `AuthenticatedPrincipal` — never
+from the request body or a client-supplied id. `id`/`bigint` identifiers are
+validated before they reach a query (a malformed value fails closed to `403`/
+`404`, never a `500`). A missing profile is surfaced as `404 PROFILE_NOT_FOUND`
+on self-service routes, but as a generic `403` on authorization paths (it never
+reveals whether a profile exists). A disabled profile (`is_active = false`) is
+denied authorization.
+
+### Company-context & membership resolution
+
+The target company id comes from the `:companyId` route parameter (or the
+`X-Company-Id` header). It identifies **which** tenant the caller is acting on —
+it is never proof of membership. The resolver verifies an active membership in
+that exact company server-side. Inactive/wrong-company memberships yield no
+context (`403`). A user may hold several active memberships in one company; the
+effective permission set is the **de-duplicated union** across them. No
+"primary" membership is invented: the informational `membershipId`/`role` on the
+`AuthorizationContext` are surfaced **only when exactly one active membership**
+makes them unambiguous, and are left undefined otherwise (there is no documented
+precedence rule to pick a winner, so none is fabricated). The authoritative
+grant is always the union, so no ordering can widen or narrow access.
+
+### Role → permission resolution
+
+[`role-permissions.ts`](./apps/backend/src/modules/identity/role-permissions.ts)
+is the single expansion of each role into the central `Permission` catalog. The
+database has **no** `roles`/`permissions`/`role_permissions` table (roles are the
+`public.user_role_enum` on `company_memberships`), so this map is the
+application-side "manageable default permission set". It is **strict and
+cited**: every grant traces to a specific RLS policy, an authorization predicate,
+or a documented business-rule flow; anything not cited is **not** granted (fail
+closed). An RLS *read* policy is never used to justify an unrelated write, and a
+role value the application does not recognize is dropped and logged (count only),
+never granted.
+
+| Role | Permissions | Basis |
+| --- | --- | --- |
+| `SUPER_ADMIN` | whole catalog | `private.is_super_admin()` short-circuits every RLS predicate. |
+| `COMPANY_MANAGER` | whole catalog | `private.can_manage_company()` + §7.2 ownership + manager business flows. |
+| `BRANCH_EMPLOYEE` | the read set only | company-scoped RLS *read* policies; no documented write. |
+| `AGENT` | read set **+** `bookings.create` | read policies + the agent as booking creator (`12-business-rules.md` §1). |
+| `PASSENGER` | none | reaches own resources by ownership, never a company-scoped permission. |
+
+The **read set** is `companies.read`, `branches.read`, `staff.read`,
+`fleet.read`, `routes.read`, `trips.read`, `bookings.read`, `payments.read`,
+`tickets.read`, `maintenance.read` — the resources admitted by the company-scoped
+RLS read policies. `memberships.read` and `audit.read` are gated on
+`can_manage_company()`, so they belong to managers (and super-admins) only, not
+to employees or agents. Branch-office ticketing/payment **writes** are
+deliberately deferred to the phase that defines those flows rather than granted
+here without a citation. The exact policy-per-grant citations live in the module
+doc-comment; each row above is asserted in `role-permissions.spec.ts` (including
+that employees and agents never receive an undocumented write).
+
+### Branch access
+
+[`branch-access.ts`](./apps/backend/src/modules/identity/branch-access.ts)
+mirrors `private.has_branch_access()`: `company-wide` for a manager/super-admin,
+`restricted` to the union of an employee/agent's branch grants, or `none`.
+Branch access is resolved and exposed through the identity domain; it is not
+added to `AuthorizationContext` (whose contract is unchanged).
+
+### Branch-scoped authority (no permission/branch cross-product)
+
+The context's `permissions` and `branchAccess` are each a **caller-wide union**
+across memberships. They are correct for *company-scoped* decisions, but must
+**never be intersected** to make a *branch-scoped* one — that would form a
+cross-product across memberships. Concretely: an `AGENT` scoped to Branch A
+(granting `bookings.create`) plus a `BRANCH_EMPLOYEE` scoped to Branch B
+(granting no create) would, under a naive `permissions ∩ branchAccess` check,
+appear to allow `bookings.create` in Branch B — which no single membership ever
+granted.
+
+[`entitlements.ts`](./apps/backend/src/modules/identity/entitlements.ts)
+prevents this by construction. `resolveMembershipContext` also returns an
+`entitlements` list with **one entry per membership**, each keeping that
+membership's permissions coupled to that same membership's branch scope.
+Branch-scoped decisions go through:
+
+- `effectivePermissionsForBranch(entitlements, branchId)` — the union of
+  permissions from only the memberships whose own scope reaches that branch;
+- `canExercisePermissionInBranch(entitlements, permission, branchId)` — true
+  only when a **single** membership grants both the permission and access to the
+  branch.
+
+A company-wide membership (manager/super-admin) reaches every branch, exactly
+because that role genuinely holds company-wide authority; a branch-scoped role's
+permissions never leak beyond its own branch. Phase 5 exposes no branch-scoped
+*endpoint* yet, so this is the mechanism a future branch-scoped policy uses; it
+is proven at the unit ([`entitlements.spec.ts`](./apps/backend/src/modules/identity/entitlements.spec.ts))
+and integration layers (permission from one membership is not exercisable in
+another's branch; an inactive membership contributes neither permission nor
+branch access).
+
+### Database-backed resolver
+
+[`DatabaseAuthorizationContextResolver`](./apps/backend/src/modules/identity/database-authorization-context.resolver.ts)
+implements the Phase 4 `AuthorizationContextResolver` and is bound to
+`AUTHORIZATION_CONTEXT_RESOLVER` in the app module (a local override that wins
+over the authorization module's default for the global guard). It builds the
+context purely from trusted state — verified principal, validated company,
+database profile/membership/role — and **fails closed** (`null` → `403`).
+Database failures propagate as a dependency error (`503`), never as a denial.
+
+### Tenant isolation
+
+The backend uses its trusted connection, which bypasses RLS, so every
+membership query is explicitly scoped by `company_id`; cross-company reads
+return nothing (`403`/`404`). RLS remains enabled as defense in depth and is
+covered by an integration test that queries under the `authenticated` role.
+
+### Never logged
+
+Identity paths log sanitized events only (event name, request id, coarse reason,
+and counts) — never tokens, permission sets, role values, or profile fields.

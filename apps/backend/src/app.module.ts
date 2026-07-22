@@ -12,7 +12,10 @@ import { buildPinoParams } from './infrastructure/logging/pino-logger.config';
 import { AuthModule } from './modules/auth/auth.module';
 import { AuthenticationGuard } from './modules/auth/authentication.guard';
 import { AuthorizationModule } from './modules/authorization/authorization.module';
+import { AUTHORIZATION_CONTEXT_RESOLVER } from './modules/authorization/authorization-context-resolver';
 import { AuthorizationGuard } from './modules/authorization/authorization.guard';
+import { DatabaseAuthorizationContextResolver } from './modules/identity/database-authorization-context.resolver';
+import { IdentityModule } from './modules/identity/identity.module';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -45,12 +48,20 @@ import { HealthModule } from './modules/health/health.module';
     DatabaseModule,
     AuthModule,
     AuthorizationModule,
+    IdentityModule,
     HealthModule,
   ],
   providers: [
     { provide: APP_PIPE, useValue: new ValidationPipe(validationPipeOptions) },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
+    // Bind the authorization resolver to the database-backed implementation
+    // (Phase 5), overriding the permission-less default exported by the
+    // authorization module for the app-level authorization guard.
+    {
+      provide: AUTHORIZATION_CONTEXT_RESOLVER,
+      useExisting: DatabaseAuthorizationContextResolver,
+    },
     // Guards run in registration order: rate limiting, then authentication
     // (secure by default), then authorization (permission enforcement).
     { provide: APP_GUARD, useClass: ThrottlerGuard },
