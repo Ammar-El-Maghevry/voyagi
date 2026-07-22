@@ -797,3 +797,100 @@ deadlines or percentages. Confirmed cancellation remains deferred with refunds.
 Agent creation likewise creates a hold; cash confirmation, payments, tickets/QR,
 refunds, commissions, notifications, check-in/boarding, reports, analytics, and
 frontend/mobile implementation remain Phase 12+ work.
+
+## Phase 12–13: Payments and tickets
+
+### Payments
+
+Payment APIs live under `/payments` (passenger owner), `/companies/:companyId/payments`
+(staff), and the public `/webhooks/payments/:provider`. The `payments` table,
+its RLS read policy, no-delete guard, `updated_at` trigger and the
+amount/currency snapshot check already exist from the base schema; migration
+`016_payments_tickets_engine` adds the lifecycle invariants as database triggers
+(defense in depth, since the backend role bypasses RLS) and a payment-scoped
+`idempotency_records.payment_id` pointer.
+
+**Authoritative amount/currency.** A client never supplies the total. Initiation
+locks the booking (`FOR UPDATE`), derives `amount`/`currency` from the immutable
+booking snapshot in the same `INSERT`, and `public.validate_payment_booking`
+re-checks them at the row level.
+
+**State machine** (`architecture/09-payment-state-machine.md`), enforced both in
+the application (`payment-transitions.ts`) and by the `enforce_payment_transition`
+trigger:
+
+```
+PENDING    -> PROCESSING | SUCCEEDED | CANCELLED
+PROCESSING -> SUCCEEDED  | FAILED    | CANCELLED
+SUCCEEDED  -> REFUNDED            (full refund only)
+FAILED, CANCELLED, REFUNDED       terminal
+```
+
+Illegal transitions are a `409` in the app (conditional `WHERE status = <from>`
+updates) and a backstop trigger error at the row. Payment identity/amount are
+immutable and `provider_reference` is write-once. A failed attempt is never
+reused — a retry is a new payment row (`Booking 1:N Payments`).
+
+**Provider abstraction.** Online settlement goes through a provider-neutral
+`PaymentProvider` port. Only a deterministic in-process **test** adapter is wired
+(HMAC-SHA256 over the raw webhook body, verified in constant time); real
+Bankily/Masrvi/Seddad adapters and their real secrets are **deferred** until
+their signature/payload contracts are documented. The port exposes only
+normalized internal concepts, so raw provider payloads never reach the domain.
+CASH is confirmed in person by staff (`payments.confirm`); the confirmation and
+webhook success paths both drive the booking to `CONFIRMED` and its `HELD` seats
+to `CONFIRMED`, write `PAYMENT_CONFIRMED`, and are guarded against double
+settlement by the partial unique index `uq_successful_payment_per_booking`.
+
+**Idempotency & webhook dedup.** Initiation uses durable DB-backed idempotency
+under a distinct `CREATE_PAYMENT` operation scope with a canonical, hashed
+request fingerprint. Webhooks are deduplicated exactly as the docs specify —
+terminal-state no-op plus the partial unique index `uq_payment_provider_ref`
+`(method, provider_reference)`; **no separate provider-events table is required
+or invented.** Verified against real PostgreSQL: repeated delivery, two
+simultaneous deliveries, and out-of-order success/failure all settle once; a
+wrong amount/currency/reference never mutates state; an unverified signature is a
+`400` with no mutation. A payment is never marked successful from an unverified
+payload.
+
+**Refund scope.** Full refund only (`SUCCEEDED -> REFUNDED`, amount derived from
+the captured payment), writing `REFUND_CREATED`/`REFUND_COMPLETED` booking
+events. Concurrent refunds complete once. **Partial refunds are deferred:** the
+schema has no `refunded_amount` model and partial/cancellation formulas are not
+documented, so `PARTIALLY_REFUNDED` is intentionally unreachable in both the app
+matrix and the trigger (the enum value is retained for future compatibility).
+
+### Tickets
+
+Ticket APIs live under `/bookings/:bookingId/tickets` and `/tickets/:ticketId`
+(passenger owner) and `/companies/:companyId/…` (staff: issue, read, verify,
+validate, revoke). There is no `ticket_status` enum: lifecycle is derived from
+`issued_at` / `checked_in_at` / `cancelled_at`, and `enforce_ticket_lifecycle`
+makes the issuance snapshot (including the QR hash) immutable with the two
+terminal timestamps write-once and mutually exclusive.
+
+**Issuance** requires a `CONFIRMED`, paid booking (a `SUCCEEDED` payment); it
+issues one ticket per passenger/confirmed-seat, idempotently — the unique
+constraints `uq_ticket_booking_passenger` / `uq_ticket_seat` make concurrent or
+repeated issuance produce exactly one ticket per relation. **QR tokens** are
+256-bit random values; only `sha256(token)` is stored in `qr_token_hash`, and the
+raw token is returned exactly once at issuance (never re-derivable, never logged,
+never in events). Verified against PostgreSQL: the raw token appears in no
+column. Validation (`/tickets/:id/validate`) checks in a ticket once (duplicate
+scans are a `409`), sets the seat to `CHECKED_IN`, and writes a `CHECKED_IN`
+event; verify is read-only and reports a refunded booking as invalid.
+
+### Scoping, RLS and exclusions
+
+Every payment/ticket query is explicitly scoped in SQL by passenger ownership
+(`booked_by_user_id` + `WEB`/`MOBILE_APP` channel) or by company + the *same
+membership's* branch entitlement — permissions are never unioned across
+memberships. The one deliberately unscoped read is the signature-verified webhook
+lookup by unique `internal_reference`. RLS remains defense in depth: direct
+`authenticated` writes to `payments`/`tickets` are denied (`42501`) and
+`qr_token_hash` is never exposed by a DTO.
+
+Explicitly **not** implemented (Phase 14+): agent commissions (a `SUCCEEDED`
+payment writes no commission row), maintenance, notifications, audit platform,
+reports/analytics, partial refunds, QR image/PDF rendering, and any
+boarding-device APIs beyond the documented `validate` operation.
