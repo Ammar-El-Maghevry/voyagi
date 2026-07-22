@@ -558,7 +558,108 @@ constraint names, stack traces, or cross-company existence.
 
 ### Deferred to later phases
 
-Fleet/buses, seat layouts, cities/stations, routes and pricing, and trips
-(with their `bus_status`/`trip_status` state machines and scheduling rules)
-follow in later phases. Audit-log writing for branch/staff changes is deferred to
-the Audit phase — no audit infrastructure exists yet.
+Cities/stations, seat layouts and fleet/buses arrive in Phase 7 (below); routes
+and pricing, and trips (with their `trip_status` state machine and scheduling
+rules) follow in later phases. Audit-log writing for branch/staff changes is
+deferred to the Audit phase — no audit infrastructure exists yet.
+
+## Cities, Stations, Seat Layouts & Fleet (Phase 7)
+
+Phase 7 is the transport-catalog and fleet-foundation slice. It follows the
+implementation guide (`18-backend-implementation-guide.md`), reading and writing
+only the existing `cities`, `stations`, `seat_layouts` and `buses` tables —
+**no migrations were needed** (the schema, including `buses.current_odometer_km`
+and `buses.version` added in the production-hardening migration, already
+enforces every documented invariant). The **`maintenance`** module that the guide
+also lists under this phase is deferred (see below), keeping the phase to the
+four catalog/fleet modules.
+
+### Ownership model (grounded in the schema + RLS)
+
+- **Cities, stations and seat layouts are global reference/template data**, not
+  tenant-owned. Their RLS read policies admit *any authenticated user*
+  (`cities_read_active`, `stations_read_active`, `seat_layouts_read`), and there
+  is **no `cities.*`/`stations.*`/`seat-layouts.*` permission** in the Phase 4
+  catalog and no tenant column on the tables. They are therefore exposed as
+  **read-only** catalog endpoints (authenticated, no permission required).
+- **Buses are company-owned.** Every bus query is scoped by `company_id`; buses
+  reference a *global* seat layout (`seat_layout_id`) and carry **no branch
+  column**, so all fleet authorization is company-scoped `fleet.*` — there is no
+  branch dimension in Phase 7 and thus no permission/branch cross-product to
+  guard (the Phase 5 entitlement machinery is untouched and still active).
+
+### Endpoints
+
+| Method & path | Permission | Notes |
+| --- | --- | --- |
+| `GET /api/v1/cities` | *(authenticated)* | Paginated; active cities only, stable id order. |
+| `GET /api/v1/cities/:cityId` | *(authenticated)* | `404` when absent/inactive. |
+| `GET /api/v1/stations` | *(authenticated)* | Paginated; active + non-deleted; optional `?cityId` filter. |
+| `GET /api/v1/stations/:stationId` | *(authenticated)* | `404` when absent/inactive/deleted. |
+| `GET /api/v1/seat-layouts` | *(authenticated)* | Paginated; global templates; exposes canonical seat labels. |
+| `GET /api/v1/seat-layouts/:seatLayoutId` | *(authenticated)* | `404` when absent. |
+| `GET /api/v1/companies/:companyId/buses` | `fleet.read` | Paginated; **company-scoped**. |
+| `GET /api/v1/companies/:companyId/buses/:busId` | `fleet.read` | `404` when not in the company. |
+| `POST /api/v1/companies/:companyId/buses` | `fleet.manage` | Create; `409` on duplicate plate / missing seat layout. |
+| `PATCH /api/v1/companies/:companyId/buses/:busId` | `fleet.manage` | Update descriptive fields + odometer; bumps `version`. |
+| `POST /api/v1/companies/:companyId/buses/:busId/activate` | `fleet.manage` | Activation transition. |
+| `POST /api/v1/companies/:companyId/buses/:busId/deactivate` | `fleet.manage` | Deactivation transition. |
+
+### Tenant isolation (buses)
+
+Repository signatures make the tenant context unavoidable
+(`findInCompany(companyId, busId)`, `update(companyId, busId, …)`), and every
+statement filters by `company_id` in SQL with `deleted_at IS NULL` — a bus id
+alone is never sufficient, and counts are company-filtered before counting. A
+bus addressed under the wrong company is `404`. RLS (`buses_tenant_read` =
+`has_company_access`) remains enabled as defense in depth and is covered by an
+integration test that queries under the non-bypassing `authenticated` role.
+
+### Seat layouts & capacity
+
+A seat layout is a **single row**: its seats are the canonical seat-number
+strings stored inside the `layout_grid` jsonb (an array, or an object under
+`seat_numbers`) — there is **no separate seat table**, so creating/replacing a
+layout would be one atomic statement and needs no transaction. Capacity lives on
+the layout (`total_seats`), not the bus; the database `validate_seat_layout`
+trigger enforces `count(seat_numbers) == total_seats`, distinct labels, and label
+shape. The API extracts and exposes the labels via a helper mirroring the
+database `seat_layout_numbers` function.
+
+### Bus state, odometer & version
+
+Buses carry both a boolean `is_active` and an operational `status`
+(`bus_status_enum`). **`status` transitions are maintenance-driven** (opening a
+maintenance record → `IN_MAINTENANCE`, closing it restores it — business rules
+§3); since the maintenance module is deferred, `status` is **not** mutated
+through the fleet endpoints (a new bus defaults to `ACTIVE`) rather than
+inventing an undocumented transition matrix. `is_active` uses **dedicated
+`activate`/`deactivate` transitions** (atomic conditional `UPDATE`; redundant
+transition → `409`, missing bus → `404`; no read-then-write). `current_odometer_km`
+is validated as **non-negative only** — the schema documents `>= 0`
+(`ck_buses_current_odometer`) and **no non-decreasing rule is documented**, so
+none is invented. Every bus mutation increments `version` (optimistic-concurrency
+column) atomically in the same statement.
+
+### Error semantics
+
+`400` malformed request · `401` unauthenticated · `403` no active membership or
+missing `fleet.*` permission · `404` company-scoped bus (or reference row) absent
+or safely hidden · `409` duplicate plate / missing seat-layout reference /
+redundant activation · `422` database check-constraint failure (e.g. negative
+odometer, defense in depth) · `503 DEPENDENCY_FAILURE` real database outage
+(never converted to `403`/`404`). Malformed identifiers are validated before
+reaching PostgreSQL. Bodies never leak SQL, constraint names, stack traces, or
+cross-company existence.
+
+### Deferred to later phases
+
+- **Writes to global reference data** (`POST /stations`, `POST /seat-layouts`,
+  city management) — the guide lists them as *suggested*, but the Phase 4
+  permission catalog has no reference-data-management permission and the tables
+  have no tenant scope, so implementing them would require fabricating a
+  permission or letting tenant roles mutate globally-shared data. Deferred
+  pending a platform-admin authorization model.
+- The **`maintenance`** module and maintenance-driven bus `status` transitions.
+- Routes, pricing, trips, schedules, bookings, seat reservations/locks/holds,
+  tickets and payments (Phase 8+).

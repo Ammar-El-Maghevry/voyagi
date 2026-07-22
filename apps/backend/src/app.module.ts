@@ -18,6 +18,10 @@ import { DatabaseAuthorizationContextResolver } from './modules/identity/databas
 import { IdentityModule } from './modules/identity/identity.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { StaffModule } from './modules/staff/staff.module';
+import { CitiesModule } from './modules/cities/cities.module';
+import { StationsModule } from './modules/stations/stations.module';
+import { SeatLayoutsModule } from './modules/seat-layouts/seat-layouts.module';
+import { BusesModule } from './modules/buses/buses.module';
 import { HealthModule } from './modules/health/health.module';
 
 /**
@@ -53,6 +57,10 @@ import { HealthModule } from './modules/health/health.module';
     IdentityModule,
     BranchesModule,
     StaffModule,
+    CitiesModule,
+    StationsModule,
+    SeatLayoutsModule,
+    BusesModule,
     HealthModule,
   ],
   providers: [
