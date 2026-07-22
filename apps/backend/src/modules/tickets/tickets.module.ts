@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module';
 import {
   CompanyTicketsController,
   PassengerTicketsController,
@@ -17,6 +18,7 @@ import {
 } from './ticket.use-cases';
 
 @Module({
+  imports: [AuditModule],
   controllers: [PassengerTicketsController, CompanyTicketsController],
   providers: [
     { provide: TICKETS_REPOSITORY, useClass: PostgresTicketsRepository },

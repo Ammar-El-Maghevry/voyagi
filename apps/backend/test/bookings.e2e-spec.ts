@@ -7,6 +7,12 @@ import {
   DatabaseConnectionError,
   TransactionManager,
 } from '../src/infrastructure/database';
+import type { Transaction } from '../src/infrastructure/database/transaction.manager';
+import {
+  AUDIT_WRITER,
+  type AuditWriterPort,
+} from '../src/modules/audit/audit.service';
+import type { AuditAppendInput, AuditLog } from '../src/modules/audit/audit.types';
 import { AUTH_KEY_RESOLVER } from '../src/modules/auth/jwks-key-resolver.provider';
 import {
   CreatePassengerBookingUseCase,
@@ -37,6 +43,27 @@ const inlineTransactions = {
   run: <T>(work: (tx: never) => Promise<T>): Promise<T> => work({} as never),
 };
 
+class RecordingAuditWriter implements AuditWriterPort {
+  readonly events: AuditAppendInput[] = [];
+
+  async append(_transaction: Transaction, input: AuditAppendInput): Promise<AuditLog> {
+    this.events.push(input);
+    return {
+      id: String(this.events.length),
+      actorUserId: input.actorUserId ?? null,
+      companyId: input.companyId,
+      action: input.action,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      oldValues: null,
+      newValues: null,
+      requestId: null,
+      correlationId: null,
+      createdAt: new Date('2026-07-22T12:00:00.000Z'),
+    };
+  }
+}
+
 describe('Bookings (e2e)', () => {
   const ISSUER = 'http://127.0.0.1:54321/auth/v1';
   const AUDIENCE = 'authenticated';
@@ -50,6 +77,7 @@ describe('Bookings (e2e)', () => {
   let moduleRef: TestingModule;
   let key: TestSigningKey;
   let bookings: InMemoryBookingsRepository;
+  let auditWriter: RecordingAuditWriter;
 
   const auth = (subject: string) =>
     signTestToken(key, { issuer: ISSUER, audience: AUDIENCE, subject }).then(
@@ -69,6 +97,7 @@ describe('Bookings (e2e)', () => {
   beforeAll(async () => {
     key = await generateTestKey('bookings-e2e', 'ES256');
     bookings = new InMemoryBookingsRepository();
+    auditWriter = new RecordingAuditWriter();
     const identity = new InMemoryIdentityRepository();
 
     bookings.addTrip();
@@ -127,6 +156,8 @@ describe('Bookings (e2e)', () => {
       .useValue(bookings)
       .overrideProvider(TransactionManager)
       .useValue(inlineTransactions)
+      .overrideProvider(AUDIT_WRITER)
+      .useValue(auditWriter)
       .compile();
 
     app = moduleRef.createNestApplication({ bufferLogs: true });
@@ -266,6 +297,23 @@ describe('Bookings (e2e)', () => {
     ).toEqual(['CANCELLED', 'BOOKING_CREATED']);
     expect(repeated.status).toBe(409);
     expect(repeated.body.error.code).toBe('BOOKING_NOT_CANCELLABLE');
+
+    const cancellationAudits = auditWriter.events.filter(
+      (event) => event.action === 'BOOKING_CANCELLED',
+    );
+    expect(cancellationAudits).toHaveLength(1);
+    expect(cancellationAudits[0]).toMatchObject({
+      actorUserId: PASSENGER,
+      companyId: '10',
+      action: 'BOOKING_CANCELLED',
+      entityType: 'booking',
+      entityId: bookingId,
+      newValues: { status: 'CANCELLED' },
+    });
+    expect(Object.keys(cancellationAudits[0].newValues ?? {})).toEqual(['status']);
+    expect(JSON.stringify(cancellationAudits[0])).not.toMatch(
+      /passenger|phone|document|token|qr|authorization|cookie|request|idempotency|sql/i,
+    );
   });
 
   it('serializes booking events through an exact public allowlist', async () => {

@@ -30,6 +30,7 @@ export enum Permission {
   PaymentsRead = 'payments.read',
   PaymentsConfirm = 'payments.confirm',
   PaymentsRefund = 'payments.refund',
+  CommissionsRead = 'commissions.read',
   TicketsRead = 'tickets.read',
   TicketsIssue = 'tickets.issue',
   TicketsValidate = 'tickets.validate',

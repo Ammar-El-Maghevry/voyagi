@@ -9,6 +9,7 @@ import {
   UniqueConstraintViolationError,
 } from '../../infrastructure/database';
 import { Permission } from '../authorization/permission.enum';
+import { AUDIT_WRITER, type AuditWriterPort } from '../audit/audit.service';
 import {
   canExercisePermissionInBranch,
   resolveEntitlements,
@@ -53,6 +54,7 @@ export class BookingsService {
     private readonly transactions: TransactionManager,
     @Optional()
     private readonly references: BookingReferenceGenerator = new BookingReferenceGenerator(),
+    @Optional() @Inject(AUDIT_WRITER) private readonly audit?: AuditWriterPort,
   ) {}
 
   async createPassengerBooking(
@@ -258,6 +260,14 @@ export class BookingsService {
       }
       await this.repository.releaseBookingSeats(tx, bookingId);
       await this.repository.appendEvent(tx, bookingId, cancelled.companyId, actorUserId, 'CANCELLED');
+      await this.audit?.append(tx, {
+        actorUserId,
+        companyId: cancelled.companyId,
+        action: 'BOOKING_CANCELLED',
+        entityType: 'booking',
+        entityId: bookingId,
+        newValues: { status: cancelled.status },
+      });
       const booking = await this.repository.findForOwner(tx, actorUserId, bookingId);
       if (!booking) throw new BookingNotFoundError();
       return booking;
@@ -302,6 +312,14 @@ export class BookingsService {
       }
       await this.repository.releaseBookingSeats(tx, bookingId);
       await this.repository.appendEvent(tx, bookingId, company, actorUserId, 'CANCELLED');
+      await this.audit?.append(tx, {
+        actorUserId,
+        companyId: cancelled.companyId,
+        action: 'BOOKING_CANCELLED',
+        entityType: 'booking',
+        entityId: bookingId,
+        newValues: { status: cancelled.status },
+      });
       const booking = await this.repository.findForCompany(
         tx,
         company,

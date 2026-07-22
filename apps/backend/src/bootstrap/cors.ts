@@ -1,7 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import type { AppConfig, CorsConfig } from '../config';
-import { REQUEST_ID_HEADER } from '../common/constants/request.constants';
+import {
+  CORRELATION_ID_HEADER,
+  REQUEST_ID_HEADER,
+} from '../common/constants/request.constants';
 
 /**
  * Build CORS options from configuration.
@@ -28,7 +31,8 @@ export function buildCorsOptions(config: ConfigService): CorsOptions {
       'Idempotency-Key',
       'X-Company-Id',
       REQUEST_ID_HEADER,
+      CORRELATION_ID_HEADER,
     ],
-    exposedHeaders: [REQUEST_ID_HEADER],
+    exposedHeaders: [REQUEST_ID_HEADER, CORRELATION_ID_HEADER],
   };
 }

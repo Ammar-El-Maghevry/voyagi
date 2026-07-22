@@ -19,6 +19,7 @@ import {
 } from '../../src/modules/trips/trip.errors';
 import { TripAction } from '../../src/modules/trips/trip-transitions';
 import { TripStatus } from '../../src/modules/trips/trip-status';
+import type { MaintenanceSchedulingPort } from '../../src/modules/maintenance/maintenance-scheduling.port';
 
 const DATABASE_URL =
   process.env.DATABASE_URL ??
@@ -30,6 +31,9 @@ const DEP2_OVERLAP = new Date('2026-03-01T10:00:00.000Z');
 const ARR2_OVERLAP = new Date('2026-03-01T15:00:00.000Z');
 const DEP3_CLEAR = new Date('2026-03-01T14:00:00.000Z');
 const ARR3_CLEAR = new Date('2026-03-01T18:00:00.000Z');
+const noMaintenance: MaintenanceSchedulingPort = {
+  hasActiveMaintenanceOverlap: () => Promise.resolve(false),
+};
 
 interface Seed {
   user: string;
@@ -145,7 +149,7 @@ describe('Trips domain (integration)', () => {
     } as unknown as TransactionManager;
     const db = tx as unknown as DatabaseService;
     return {
-      trips: new TripsService(tripsRepo, eventsRepo, db, txManager),
+      trips: new TripsService(tripsRepo, eventsRepo, db, txManager, noMaintenance),
       events: new TripEventsService(eventsRepo, tripsRepo, db),
     };
   }
@@ -358,8 +362,9 @@ describe('Trips domain (integration)', () => {
         const trips = new TripsService(
           new PostgresTripsRepository(),
           new PostgresTripEventsRepository(),
-          tx as unknown as DatabaseService,
-          { run: <T>(work: (t: Transaction) => Promise<T>) => work(tx) } as unknown as TransactionManager,
+           tx as unknown as DatabaseService,
+           { run: <T>(work: (t: Transaction) => Promise<T>) => work(tx) } as unknown as TransactionManager,
+           noMaintenance,
         );
         return trips.createTrip(companyId, { routeId, busId, departureTime: dep, estimatedArrivalTime: arr }, owner);
       });

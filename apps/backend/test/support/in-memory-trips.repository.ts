@@ -73,6 +73,9 @@ export class InMemoryTripsRepository implements TripsRepository {
   findBusAssignment(_e: DatabaseExecutor, companyId: string, busId: string): Promise<BusAssignment | null> {
     return Promise.resolve(this.busAssignments.get(`${companyId}:${busId}`) ?? null);
   }
+  lockBusAssignment(_e: DatabaseExecutor, companyId: string, busId: string): Promise<BusAssignment | null> {
+    return Promise.resolve(this.busAssignments.get(`${companyId}:${busId}`) ?? null);
+  }
   findStaffAssignment(_e: DatabaseExecutor, companyId: string, staffId: string): Promise<StaffAssignment | null> {
     return Promise.resolve(this.staffAssignments.get(`${companyId}:${staffId}`) ?? null);
   }

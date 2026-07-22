@@ -46,8 +46,9 @@ import { MembershipRole } from './membership-role';
  *
  * ── AGENT: `bookings.create` — `12-business-rules.md` §1 and
  *    `06-agent-booking-sequence.md` document the agent membership as the booking
- *    creator (`booked_by_user_id` is the agent). No other agent write is
- *    documented, so none is granted.
+ *    creator (`booked_by_user_id` is the agent). `commissions.read` is limited by
+ *    the commissions service to the agent's own active membership rows. No other
+ *    agent write is documented, so none is granted.
  *
  * ── SUPER_ADMIN: unrestricted. `private.is_super_admin()` short-circuits every
  *    authorization predicate in `012_rls.sql` (`has_company_access`,
@@ -95,6 +96,7 @@ export const ROLE_PERMISSIONS: Readonly<
   [MembershipRole.Agent]: Object.freeze([
     ...COMPANY_READ_PERMISSIONS,
     Permission.BookingsCreate,
+    Permission.CommissionsRead,
   ]),
 
   // No company-scoped permission.

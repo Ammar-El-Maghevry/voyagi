@@ -71,6 +71,13 @@ export interface TripsRepository {
     busId: string,
   ): Promise<BusAssignment | null>;
 
+  /** Lock the company bus row before changing its schedule. */
+  lockBusAssignment(
+    executor: DatabaseExecutor,
+    companyId: string,
+    busId: string,
+  ): Promise<BusAssignment | null>;
+
   /**
    * Staff facts scoped to the company, excluding soft-deleted rows (for
    * driver/assistant validation), or `null`. Excludes `deleted_at IS NOT NULL`,

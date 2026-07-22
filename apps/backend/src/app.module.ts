@@ -28,7 +28,10 @@ import { AvailabilityModule } from './modules/availability/availability.module';
 import { BookingsModule } from './modules/bookings/bookings.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { HealthModule } from './modules/health/health.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { CommissionsModule } from './modules/commissions/commissions.module';
 
 /**
  * Root application module for the Phase 1 foundation.
@@ -72,7 +75,10 @@ import { HealthModule } from './modules/health/health.module';
     AvailabilityModule,
     BookingsModule,
     PaymentsModule,
+    CommissionsModule,
     TicketsModule,
+    MaintenanceModule,
+    AuditModule,
     HealthModule,
   ],
   providers: [

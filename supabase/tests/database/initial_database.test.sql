@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(51);
+select plan(75);
 
 select is(
   (select count(*)
@@ -338,10 +338,71 @@ select throws_ok(
 
 select throws_ok(
   $$insert into public.vehicle_maintenance_records (
-      bus_id, company_id, maintenance_type, status, started_at
-    ) values (90001, 90002, 'INSPECTION', 'SCHEDULED', now())$$,
+      bus_id, company_id, maintenance_type, status, started_at, scheduled_ends_at
+    ) values (90001, 90002, 'INSPECTION', 'SCHEDULED', now(), now() + interval '1 hour')$$,
   '23503', 'insert or update on table "vehicle_maintenance_records" violates foreign key constraint "fk_maintenance_bus_company"',
   'maintenance cannot point to another company bus'
+);
+
+select throws_ok(
+  $$insert into public.vehicle_maintenance_records (
+      bus_id, company_id, maintenance_type, status, started_at
+    ) values (90001, 90001, 'INSPECTION', 'SCHEDULED', now())$$,
+  '23514', 'new row for relation "vehicle_maintenance_records" violates check constraint "ck_maintenance_scheduled_requires_end"',
+  'scheduled maintenance requires a planned end'
+);
+select lives_ok(
+  $$insert into public.vehicle_maintenance_records (
+      bus_id, company_id, maintenance_type, status, started_at, scheduled_ends_at
+    ) values (90001, 90001, 'INSPECTION', 'SCHEDULED', now(), now() + interval '2 hours')$$,
+  'scheduled maintenance with a finite half-open window is allowed'
+);
+select throws_ok(
+  $$insert into public.vehicle_maintenance_records (
+      bus_id, company_id, maintenance_type, status, started_at, scheduled_ends_at
+    ) values (90001, 90001, 'ENGINE', 'SCHEDULED', now(), now() + interval '3 hours')$$,
+  '23505', 'duplicate key value violates unique constraint "uq_maintenance_one_active_record_per_bus"',
+  'only one scheduled or in-progress maintenance record may exist per bus'
+);
+select lives_ok(
+  $$update public.vehicle_maintenance_records set status = 'IN_PROGRESS'
+      where bus_id = 90001 and company_id = 90001$$,
+  'SCHEDULED maintenance can begin'
+);
+select lives_ok(
+  $$update public.vehicle_maintenance_records set status = 'COMPLETED', completed_at = now()
+      where bus_id = 90001 and company_id = 90001$$,
+  'IN_PROGRESS maintenance can complete with a server-controlled completion timestamp'
+);
+select throws_ok(
+  $$update public.vehicle_maintenance_records set status = 'SCHEDULED'
+      where bus_id = 90001 and company_id = 90001$$,
+  '23514', 'illegal maintenance transition COMPLETED -> SCHEDULED',
+  'completed maintenance cannot be reopened'
+);
+select throws_ok(
+  $$update public.agent_commission_transactions set commission_amount = 11
+      where agent_membership_id = 90003 and booking_id = '20000000-0000-0000-0000-000000000001'$$,
+  '55000', 'commission financial snapshot is immutable',
+  'commission calculation snapshots cannot be changed'
+);
+select lives_ok(
+  $$update public.agent_commission_transactions set status = 'CANCELLED', cancelled_at = now()
+      where agent_membership_id = 90003 and booking_id = '20000000-0000-0000-0000-000000000001'$$,
+  'EARNED commission can be cancelled through its lifecycle transition'
+);
+select throws_ok(
+  $$update public.agent_commission_transactions set status = 'EARNED'
+      where agent_membership_id = 90003 and booking_id = '20000000-0000-0000-0000-000000000001'$$,
+  '23514', 'illegal commission transition CANCELLED -> EARNED',
+  'cancelled commission is terminal'
+);
+insert into public.audit_logs (company_id, action, entity_type, entity_id)
+values (90001, 'PGTAP_AUDIT_APPEND', 'audit_log', 'pgtap');
+select throws_ok(
+  $$delete from public.audit_logs where action = 'PGTAP_AUDIT_APPEND'$$,
+  '55000', 'audit_logs is append-only; DELETE is forbidden',
+  'audit logs remain append-only'
 );
 
 insert into public.trip_events (trip_id, company_id, event_type, event_source)
@@ -388,6 +449,18 @@ select is((select count(*) from public.booking_events where company_id = 90002),
   'booking event RLS hides another company events');
 select is((select count(*) from public.booking_events where company_id = 90001), 2::bigint,
   'company manager can read own company booking events');
+select is((select count(*) from public.vehicle_maintenance_records where company_id = 90001), 1::bigint,
+  'company manager can read own company maintenance records');
+select is((select count(*) from public.agent_commission_transactions where company_id = 90001), 1::bigint,
+  'company manager can read own company commissions');
+select is((select count(*) from public.audit_logs where company_id = 90001), 1::bigint,
+  'company manager can read own company audit logs');
+select is((select count(*) from public.vehicle_maintenance_records where company_id = 90002), 0::bigint,
+  'company manager cannot read another company maintenance records');
+select is((select count(*) from public.agent_commission_transactions where company_id = 90002), 0::bigint,
+  'company manager cannot read another company commissions');
+select is((select count(*) from public.audit_logs where company_id = 90002), 0::bigint,
+  'company manager cannot read another company audit logs');
 
 set local "request.jwt.claim.sub" = '10000000-0000-0000-0000-000000000002';
 select is((select count(*) from public.bookings where branch_id = 90002), 0::bigint,
@@ -408,6 +481,39 @@ select is(
   0::bigint,
   'branch employee cannot read another branch booking events'
 );
+set local "request.jwt.claim.sub" = '10000000-0000-0000-0000-000000000003';
+select is((select count(*) from public.agent_commission_transactions where company_id = 90001), 1::bigint,
+  'owning active agent can read own commission rows');
+reset role;
+update public.company_memberships set is_active = false where id = 90003;
+set local role authenticated;
+set local "request.jwt.claim.sub" = '10000000-0000-0000-0000-000000000003';
+select is((select count(*) from public.agent_commission_transactions where company_id = 90001), 0::bigint,
+  'inactive agent membership cannot read commission rows');
+reset role;
+update public.company_memberships set is_active = true where id = 90003;
+set local role authenticated;
+select is(
+  has_table_privilege('authenticated', 'public.vehicle_maintenance_records', 'INSERT')
+    or has_table_privilege('authenticated', 'public.vehicle_maintenance_records', 'UPDATE')
+    or has_table_privilege('authenticated', 'public.vehicle_maintenance_records', 'DELETE'),
+  false,
+  'authenticated has no direct maintenance writes'
+);
+select is(
+  has_table_privilege('authenticated', 'public.agent_commission_transactions', 'INSERT')
+    or has_table_privilege('authenticated', 'public.agent_commission_transactions', 'UPDATE')
+    or has_table_privilege('authenticated', 'public.agent_commission_transactions', 'DELETE'),
+  false,
+  'authenticated has no direct commission writes'
+);
+select is(
+  has_table_privilege('authenticated', 'public.audit_logs', 'INSERT')
+    or has_table_privilege('authenticated', 'public.audit_logs', 'UPDATE')
+    or has_table_privilege('authenticated', 'public.audit_logs', 'DELETE'),
+  false,
+  'authenticated has no direct audit writes'
+);
 select is(
   (select count(*)
    from pg_catalog.pg_class class
@@ -423,6 +529,27 @@ select throws_ok(
     ) values ('CLIENT-WRITE', 90001, 90001, 'WEB', 'DRAFT', 100, 100)$$,
   '42501', 'permission denied for table bookings',
   'authenticated clients cannot write bookings directly'
+);
+select throws_ok(
+  $$insert into public.audit_logs (company_id, action, entity_type, entity_id)
+    values (90001, 'CLIENT_WRITE', 'audit_log', '1')$$,
+  '42501', 'permission denied for table audit_logs',
+  'authenticated clients cannot insert audit rows directly'
+);
+select throws_ok(
+  $$insert into public.vehicle_maintenance_records (
+      bus_id, company_id, maintenance_type, status, started_at, scheduled_ends_at
+    ) values (90001, 90001, 'OTHER', 'SCHEDULED', now(), now() + interval '1 hour')$$,
+  '42501', 'permission denied for table vehicle_maintenance_records',
+  'authenticated clients cannot insert maintenance records directly'
+);
+select throws_ok(
+  $$insert into public.agent_commission_transactions (
+      agent_membership_id, booking_id, company_id, commission_rate, base_amount,
+      commission_amount, status, earned_at
+    ) values (90003, '20000000-0000-0000-0000-000000000001', 90001, 10, 100, 10, 'EARNED', now())$$,
+  '42501', 'permission denied for table agent_commission_transactions',
+  'authenticated clients cannot insert commission rows directly'
 );
 
 reset role;

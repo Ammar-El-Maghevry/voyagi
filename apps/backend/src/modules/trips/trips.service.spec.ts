@@ -23,6 +23,7 @@ import type {
 } from './trips.repository';
 import type { Trip, TripInsert } from './trip.types';
 import { TripsService } from './trips.service';
+import type { MaintenanceSchedulingPort } from '../maintenance/maintenance-scheduling.port';
 
 function makeTrip(overrides: Partial<Trip> = {}): Trip {
   return {
@@ -63,6 +64,9 @@ class FakeTripsRepository implements TripsRepository {
     return Promise.resolve(this.route);
   }
   findBusAssignment(): Promise<BusAssignment | null> {
+    return Promise.resolve(this.bus);
+  }
+  lockBusAssignment(): Promise<BusAssignment | null> {
     return Promise.resolve(this.bus);
   }
   findStaffAssignment(_e: DatabaseExecutor, _c: string, staffId: string): Promise<StaffAssignment | null> {
@@ -112,6 +116,9 @@ const fakeTransactions = {
     work({} as DatabaseExecutor),
 } as unknown as TransactionManager;
 const fakeDb = {} as DatabaseService;
+const fakeMaintenance: MaintenanceSchedulingPort = {
+  hasActiveMaintenanceOverlap: () => Promise.resolve(false),
+};
 
 const CREATE_INPUT = {
   routeId: '3',
@@ -128,7 +135,7 @@ describe('TripsService', () => {
   beforeEach(() => {
     repo = new FakeTripsRepository();
     events = new FakeTripEventsRepository();
-    service = new TripsService(repo, events, fakeDb, fakeTransactions);
+    service = new TripsService(repo, events, fakeDb, fakeTransactions, fakeMaintenance);
   });
 
   it('returns an empty page for a malformed company id', async () => {

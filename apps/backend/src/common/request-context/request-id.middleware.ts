@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { ensureRequestId } from './request-id.util';
 
 /**
- * Express middleware that guarantees every request carries a correlation id
+ * Express middleware that guarantees every request carries a request id
  * before any other handler (including the logger) runs.
  *
  * Implemented as a plain function and registered with `app.use()` so it is

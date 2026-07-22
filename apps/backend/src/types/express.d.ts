@@ -11,6 +11,12 @@ declare module 'express' {
     id?: string;
 
     /**
+     * Optional client-supplied UUID used to correlate requests across systems.
+     * It is absent when the header is missing or invalid and is never generated.
+     */
+    correlationId?: string;
+
+    /**
      * Verified authenticated principal attached by the authentication guard on
      * protected routes. Absent on public routes.
      */

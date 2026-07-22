@@ -106,6 +106,23 @@ export class PostgresTripsRepository implements TripsRepository {
     return row ? { isActive: row.is_active, status: row.status } : null;
   }
 
+  async lockBusAssignment(
+    executor: DatabaseExecutor,
+    companyId: string,
+    busId: string,
+  ): Promise<BusAssignment | null> {
+    const result = await executor.query<{ is_active: boolean; status: string }>(
+      `SELECT is_active, status
+         FROM public.buses
+         WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+      [busId, companyId],
+      { name: 'trips.lock_bus_assignment' },
+    );
+    const row = result.rows[0];
+    return row ? { isActive: row.is_active, status: row.status } : null;
+  }
+
   async findStaffAssignment(
     executor: DatabaseExecutor,
     companyId: string,

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MaintenanceModule } from '../maintenance/maintenance.module';
 import { PostgresTripEventsRepository } from './postgres-trip-events.repository';
 import { PostgresTripsRepository } from './postgres-trips.repository';
 import { TRIP_EVENTS_REPOSITORY } from './trip-events.repository';
@@ -23,6 +24,7 @@ import { TripsService } from './trips.service';
  * `TransactionManager` come from the global `DatabaseModule`.
  */
 @Module({
+  imports: [MaintenanceModule],
   controllers: [TripsController, TripEventsController],
   providers: [
     { provide: TRIPS_REPOSITORY, useClass: PostgresTripsRepository },
