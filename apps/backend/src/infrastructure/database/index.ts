@@ -29,6 +29,7 @@ export {
   ForeignKeyViolationError,
   NotNullViolationError,
   CheckConstraintViolationError,
+  ExclusionConstraintViolationError,
   SerializationFailureError,
   DeadlockError,
   StatementTimeoutError,

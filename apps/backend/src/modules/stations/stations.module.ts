@@ -18,5 +18,8 @@ import { StationsService } from './stations.service';
     { provide: STATIONS_REPOSITORY, useClass: PostgresStationsRepository },
     StationsService,
   ],
+  // Exported so route creation can validate that origin/destination stations
+  // exist and are active (routes reference the global station catalog).
+  exports: [STATIONS_REPOSITORY],
 })
 export class StationsModule {}

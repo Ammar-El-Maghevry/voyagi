@@ -8,6 +8,7 @@ import {
   DatabaseConnectionError,
   DatabaseError,
   DeadlockError,
+  ExclusionConstraintViolationError,
   ForeignKeyViolationError,
   NotNullViolationError,
   SerializationFailureError,
@@ -22,6 +23,7 @@ const SqlState = {
   FOREIGN_KEY_VIOLATION: '23503',
   NOT_NULL_VIOLATION: '23502',
   CHECK_VIOLATION: '23514',
+  EXCLUSION_VIOLATION: '23P01',
   SERIALIZATION_FAILURE: '40001',
   DEADLOCK_DETECTED: '40P01',
   QUERY_CANCELED: '57014',
@@ -55,6 +57,8 @@ export class DatabaseErrorMapper {
         return new NotNullViolationError(error);
       case SqlState.CHECK_VIOLATION:
         return new CheckConstraintViolationError(error);
+      case SqlState.EXCLUSION_VIOLATION:
+        return new ExclusionConstraintViolationError(error);
       case SqlState.SERIALIZATION_FAILURE:
         return new SerializationFailureError(error);
       case SqlState.DEADLOCK_DETECTED:
