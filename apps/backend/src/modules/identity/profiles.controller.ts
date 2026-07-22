@@ -15,7 +15,7 @@ import { CollectionResult } from '../../common/pagination/collection-result';
 import type { AuthenticatedPrincipal } from '../auth/authenticated-principal';
 import { CurrentPrincipal } from '../auth/decorators/current-principal.decorator';
 import { CompanyMembershipSummaryDto } from './dto/company-membership-summary.dto';
-import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { PaginationQueryDto } from '../../common/pagination/pagination-query.dto';
 import { ProfileResponseDto } from './dto/profile-response.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { IdentityService } from './identity.service';

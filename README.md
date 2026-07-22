@@ -477,3 +477,88 @@ covered by an integration test that queries under the `authenticated` role.
 
 Identity paths log sanitized events only (event name, request id, coarse reason,
 and counts) — never tokens, permission sets, role values, or profile fields.
+
+## Branches & Staff (Phase 6)
+
+Phase 6 is the first operational-organization slice: company **branches** and
+**staff members**. It follows the implementation guide
+(`18-backend-implementation-guide.md`), which scopes Phase 6 to exactly these
+two modules — fleet, routes, and trips are later, separate phases. It reads and
+writes the existing `branches` and `staff_members` tables only; **no migrations
+were needed**.
+
+### Endpoints
+
+All are nested under the tenant company (`:companyId`), matching the Phase 5
+convention. The global authorization guard resolves the caller's context for the
+company and enforces the declared permission before any handler runs.
+
+| Method & path | Permission | Notes |
+| --- | --- | --- |
+| `GET /api/v1/companies/:companyId/branches` | `branches.read` | Paginated; **branch-scoped** visibility (see below). |
+| `GET /api/v1/companies/:companyId/branches/:branchId` | `branches.read` | `404` when not in the company or not visible to the caller. |
+| `POST /api/v1/companies/:companyId/branches` | `branches.manage` | Create; `409` on duplicate names / invalid city. |
+| `PATCH /api/v1/companies/:companyId/branches/:branchId` | `branches.manage` | Update descriptive fields only. |
+| `POST /api/v1/companies/:companyId/branches/:branchId/activate` | `branches.manage` | Activation transition. |
+| `POST /api/v1/companies/:companyId/branches/:branchId/deactivate` | `branches.manage` | Deactivation transition. |
+| `GET /api/v1/companies/:companyId/staff-members` | `staff.read` | Paginated; **company-scoped**. |
+| `GET /api/v1/companies/:companyId/staff-members/:staffMemberId` | `staff.read` | `404` when not in the company. |
+| `POST /api/v1/companies/:companyId/staff-members` | `staff.manage` | Create (`DRIVER`/`ASSISTANT`). |
+| `PATCH /api/v1/companies/:companyId/staff-members/:staffMemberId` | `staff.manage` | Update fields only. |
+| `POST /api/v1/companies/:companyId/staff-members/:staffMemberId/activate` | `staff.manage` | Activation transition. |
+| `POST /api/v1/companies/:companyId/staff-members/:staffMemberId/deactivate` | `staff.manage` | Deactivation transition. |
+
+### Tenant isolation
+
+The backend connects on its trusted, RLS-bypassing role, so **every** repository
+query is scoped by `company_id` in SQL — a branch or staff id alone is never
+sufficient (`WHERE id = $1 AND company_id = $2`, never a global fetch then an
+app-side company compare). Soft-deleted rows (`deleted_at`) are excluded. A
+resource addressed under the wrong company is reported as `404`, never
+distinguishing "another company" from "does not exist". RLS remains enabled as
+defense in depth and is covered by integration tests that query under the
+non-bypassing `authenticated` role.
+
+### Branch-scoped read authorization (no permission/branch cross-product)
+
+Reading branches is **branch-scoped** — it mirrors the database
+`branches_tenant_read` policy (`private.has_branch_access`): a company-wide
+member (manager/super-admin) reads every branch, while a branch-restricted
+member reads only the branch their membership is scoped to. This decision goes
+through the Phase 5 per-membership **entitlements**
+([`branch-access.policy.ts`](./apps/backend/src/modules/branches/branch-access.policy.ts)),
+never the flat `permissions × branchAccess` union: `branches.read` is only ever
+paired with a branch the *same* membership reaches, so the Phase 5 cross-product
+defect cannot reappear. Branch *management* (`branches.manage`) is a company-wide
+permission held only by managers/super-admins, so there is no branch-scoped
+*write* in Phase 6; staff are company-scoped end to end (`staff.read` is
+`has_company_access`, `staff.manage` is company-wide). The coupling is proven at
+the unit (including a synthetic cross-product construction on the real policy),
+integration (RLS + service), and E2E (an employee cannot read a sibling branch)
+layers.
+
+### State transitions
+
+Branches and staff carry a boolean `is_active` (there is no status enum in Phase
+6 — the `buses`/`trips` state machines belong to later phases). Activation is a
+**dedicated transition**, never a generic PATCH field: `activate`/`deactivate`
+flip `is_active` atomically in a single conditional `UPDATE` (`... AND is_active
+= NOT $target`), so a redundant transition changes no row and is reported as
+`409` while a missing resource is `404` — no read-then-write race.
+
+### Error semantics
+
+`400` malformed request · `401` unauthenticated · `403` no active membership or
+missing permission · `404` company-scoped resource absent or not safely visible ·
+`409` duplicate name / invalid city reference / redundant activation ·
+`503 DEPENDENCY_FAILURE` real database outage (never converted to `403`/`404`).
+Malformed identifiers are validated before reaching PostgreSQL, so they fail
+closed rather than surfacing as `22P02` → `500`. Bodies never leak SQL,
+constraint names, stack traces, or cross-company existence.
+
+### Deferred to later phases
+
+Fleet/buses, seat layouts, cities/stations, routes and pricing, and trips
+(with their `bus_status`/`trip_status` state machines and scheduling rules)
+follow in later phases. Audit-log writing for branch/staff changes is deferred to
+the Audit phase — no audit infrastructure exists yet.
