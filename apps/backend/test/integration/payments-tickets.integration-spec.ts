@@ -24,14 +24,18 @@ import {
   type ProviderInitiationRequest,
   type WebhookRequest,
 } from '../../src/modules/payments/payment-provider.port';
-import { PaymentMethod, PaymentStatus } from '../../src/modules/payments/payment.types';
+import {
+  PaymentMethod,
+  PaymentStatus,
+} from '../../src/modules/payments/payment.types';
 import { TestPaymentProvider } from '../../src/modules/payments/test-payment.provider';
 import { TicketsService } from '../../src/modules/tickets/tickets.service';
 import { PostgresTicketsRepository } from '../../src/modules/tickets/postgres-tickets.repository';
 import { TicketTokenService } from '../../src/modules/tickets/ticket-token';
 
 const DATABASE_URL =
-  process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+  process.env.DATABASE_URL ??
+  'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
 const WEBHOOK_SECRET = 'itest-webhook-secret';
 const databaseConfig = {
   get: () => ({ logQueries: false, slowQueryMs: 1_000 }),
@@ -74,7 +78,9 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
   beforeAll(async () => {
     const host = new URL(DATABASE_URL).hostname;
     if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
-      throw new Error('Integration cleanup requires a disposable local PostgreSQL database.');
+      throw new Error(
+        'Integration cleanup requires a disposable local PostgreSQL database.',
+      );
     }
     pool = new Pool({ connectionString: DATABASE_URL, max: 8 });
     pool.on('error', () => undefined);
@@ -87,10 +93,16 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       `SELECT to_regprocedure('public.enforce_payment_transition()')::text AS present`,
     );
     if (!schema.rows[0]?.present) {
-      throw new Error('Migration 016 is not applied (enforce_payment_transition is missing).');
+      throw new Error(
+        'Migration 016 is not applied (enforce_payment_transition is missing).',
+      );
     }
 
-    bookings = new BookingsService(new PostgresBookingsRepository(), database, transactions);
+    bookings = new BookingsService(
+      new PostgresBookingsRepository(),
+      database,
+      transactions,
+    );
     payments = new PaymentsService(
       new PostgresPaymentsRepository(),
       database,
@@ -121,7 +133,11 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
   afterAll(async () => {
     try {
       if (catalog) {
-        await cleanup(catalog.companyId, [catalog.owner, catalog.otherOwner, catalog.manager]);
+        await cleanup(catalog.companyId, [
+          catalog.owner,
+          catalog.otherOwner,
+          catalog.manager,
+        ]);
       }
     } finally {
       await pool.end();
@@ -149,9 +165,11 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       );
     }
     const suffix = owner.slice(0, 8);
-    const companyId = await scalar(tx, `INSERT INTO public.companies (name) VALUES ($1) RETURNING id`, [
-      `PT ${suffix}`,
-    ]);
+    const companyId = await scalar(
+      tx,
+      `INSERT INTO public.companies (name) VALUES ($1) RETURNING id`,
+      [`PT ${suffix}`],
+    );
     const city = await scalar(
       tx,
       `INSERT INTO public.cities (name_ar, name_fr) VALUES ($1, $2) RETURNING id`,
@@ -207,7 +225,10 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
   async function makeBooking(owner: string, count = 1): Promise<string> {
     const passengers = Array.from({ length: count }, () => {
       seatCounter += 1;
-      return { fullName: `Passenger ${seatCounter}`, seatId: `S${seatCounter}` };
+      return {
+        fullName: `Passenger ${seatCounter}`,
+        seatId: `S${seatCounter}`,
+      };
     });
     const booking = await bookings.createPassengerBooking(owner, randomUUID(), {
       tripId: catalog.tripId,
@@ -233,7 +254,10 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
         currency,
       }),
     );
-    return { rawBody, headers: { 'x-voyagi-signature': provider.sign(rawBody) } };
+    return {
+      rawBody,
+      headers: { 'x-voyagi-signature': provider.sign(rawBody) },
+    };
   }
 
   async function paymentCount(bookingId: string): Promise<number> {
@@ -256,10 +280,14 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('derives the authoritative amount from the booking snapshot', async () => {
     const bookingId = await makeBooking(catalog.owner, 2);
-    const payment = await payments.createPassengerPayment(catalog.owner, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Bankily,
-    });
+    const payment = await payments.createPassengerPayment(
+      catalog.owner,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Bankily,
+      },
+    );
     expect(payment.amount).toBe('1000.00'); // 500 * 2, server-derived
     expect(payment.currency).toBe('MRU');
     expect(payment.status).toBe(PaymentStatus.Processing);
@@ -290,7 +318,10 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
     expect(replay.id).toBe(first.id);
     expect(await paymentCount(bookingId)).toBe(1);
     await expect(
-      payments.createPassengerPayment(catalog.owner, key, { bookingId, method: PaymentMethod.Masrvi }),
+      payments.createPassengerPayment(catalog.owner, key, {
+        bookingId,
+        method: PaymentMethod.Masrvi,
+      }),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -298,8 +329,14 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
     const bookingId = await makeBooking(catalog.owner, 1);
     const key = randomUUID();
     const [a, b] = await Promise.all([
-      payments.createPassengerPayment(catalog.owner, key, { bookingId, method: PaymentMethod.Bankily }),
-      payments.createPassengerPayment(catalog.owner, key, { bookingId, method: PaymentMethod.Bankily }),
+      payments.createPassengerPayment(catalog.owner, key, {
+        bookingId,
+        method: PaymentMethod.Bankily,
+      }),
+      payments.createPassengerPayment(catalog.owner, key, {
+        bookingId,
+        method: PaymentMethod.Bankily,
+      }),
     ]);
     expect(a.id).toBe(b.id);
     expect(await paymentCount(bookingId)).toBe(1);
@@ -328,10 +365,15 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('confirms a cash payment once under duplicate confirmation and confirms the booking', async () => {
     const bookingId = await makeBooking(catalog.owner, 1);
-    const cash = await payments.createCompanyPayment(catalog.manager, catalog.companyId, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Cash,
-    });
+    const cash = await payments.createCompanyPayment(
+      catalog.manager,
+      catalog.companyId,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Cash,
+      },
+    );
     const results = await Promise.allSettled([
       payments.confirmCashPayment(catalog.manager, catalog.companyId, cash.id),
       payments.confirmCashPayment(catalog.manager, catalog.companyId, cash.id),
@@ -359,11 +401,19 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('confirms an online payment via a signed webhook, idempotent under duplicate delivery', async () => {
     const bookingId = await makeBooking(catalog.owner, 1);
-    const payment = await payments.createPassengerPayment(catalog.owner, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Bankily,
-    });
-    const hook = webhookFor(payment.internalReference, payment.providerReference!, payment.amount);
+    const payment = await payments.createPassengerPayment(
+      catalog.owner,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Bankily,
+      },
+    );
+    const hook = webhookFor(
+      payment.internalReference,
+      payment.providerReference!,
+      payment.amount,
+    );
     const [first, second] = await Promise.all([
       payments.handleWebhook('test', hook.rawBody, hook.headers),
       payments.handleWebhook('test', hook.rawBody, hook.headers),
@@ -381,13 +431,23 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('rejects an unverified webhook signature and mutates nothing', async () => {
     const bookingId = await makeBooking(catalog.owner, 1);
-    const payment = await payments.createPassengerPayment(catalog.owner, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Bankily,
-    });
-    const hook = webhookFor(payment.internalReference, payment.providerReference!, payment.amount);
+    const payment = await payments.createPassengerPayment(
+      catalog.owner,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Bankily,
+      },
+    );
+    const hook = webhookFor(
+      payment.internalReference,
+      payment.providerReference!,
+      payment.amount,
+    );
     await expect(
-      payments.handleWebhook('test', hook.rawBody, { 'x-voyagi-signature': 'deadbeef' }),
+      payments.handleWebhook('test', hook.rawBody, {
+        'x-voyagi-signature': 'deadbeef',
+      }),
     ).rejects.toMatchObject({ status: 400 });
     const status = await pool.query<{ status: string }>(
       `SELECT status::text AS status FROM public.payments WHERE id = $1`,
@@ -398,20 +458,39 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('never settles on a wrong amount and handles out-of-order failure after success', async () => {
     const bookingId = await makeBooking(catalog.owner, 1);
-    const payment = await payments.createPassengerPayment(catalog.owner, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Bankily,
-    });
+    const payment = await payments.createPassengerPayment(
+      catalog.owner,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Bankily,
+      },
+    );
     // Wrong amount → rejected, no mutation.
-    const wrong = webhookFor(payment.internalReference, payment.providerReference!, '1.00');
-    await expect(payments.handleWebhook('test', wrong.rawBody, wrong.headers)).rejects.toMatchObject({
+    const wrong = webhookFor(
+      payment.internalReference,
+      payment.providerReference!,
+      '1.00',
+    );
+    await expect(
+      payments.handleWebhook('test', wrong.rawBody, wrong.headers),
+    ).rejects.toMatchObject({
       status: 422,
     });
-    expect((await pool.query(`SELECT status FROM public.payments WHERE id=$1`, [payment.id])).rows[0]
-      .status).toBe('PROCESSING');
+    expect(
+      (
+        await pool.query(`SELECT status FROM public.payments WHERE id=$1`, [
+          payment.id,
+        ])
+      ).rows[0].status,
+    ).toBe('PROCESSING');
 
     // Correct success, then a late FAILED event is a harmless no-op.
-    const ok = webhookFor(payment.internalReference, payment.providerReference!, payment.amount);
+    const ok = webhookFor(
+      payment.internalReference,
+      payment.providerReference!,
+      payment.amount,
+    );
     await payments.handleWebhook('test', ok.rawBody, ok.headers);
     const late = webhookFor(
       payment.internalReference,
@@ -419,22 +498,38 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       payment.amount,
       ProviderEventOutcome.Failed,
     );
-    await expect(payments.handleWebhook('test', late.rawBody, late.headers)).resolves.toEqual({
+    await expect(
+      payments.handleWebhook('test', late.rawBody, late.headers),
+    ).resolves.toEqual({
       received: true,
     });
-    expect((await pool.query(`SELECT status FROM public.payments WHERE id=$1`, [payment.id])).rows[0]
-      .status).toBe('SUCCEEDED');
+    expect(
+      (
+        await pool.query(`SELECT status FROM public.payments WHERE id=$1`, [
+          payment.id,
+        ])
+      ).rows[0].status,
+    ).toBe('SUCCEEDED');
   });
 
   // === Refund =============================================================
 
   it('refunds a settled payment exactly once under concurrent refunds', async () => {
     const bookingId = await makeBooking(catalog.owner, 1);
-    const cash = await payments.createCompanyPayment(catalog.manager, catalog.companyId, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Cash,
-    });
-    await payments.confirmCashPayment(catalog.manager, catalog.companyId, cash.id);
+    const cash = await payments.createCompanyPayment(
+      catalog.manager,
+      catalog.companyId,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Cash,
+      },
+    );
+    await payments.confirmCashPayment(
+      catalog.manager,
+      catalog.companyId,
+      cash.id,
+    );
     const results = await Promise.allSettled([
       payments.refundPayment(catalog.manager, catalog.companyId, cash.id),
       payments.refundPayment(catalog.manager, catalog.companyId, cash.id),
@@ -459,13 +554,25 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   // === Tickets ============================================================
 
-  async function confirmedPaidBooking(owner: string, count: number): Promise<string> {
+  async function confirmedPaidBooking(
+    owner: string,
+    count: number,
+  ): Promise<string> {
     const bookingId = await makeBooking(owner, count);
-    const cash = await payments.createCompanyPayment(catalog.manager, catalog.companyId, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Cash,
-    });
-    await payments.confirmCashPayment(catalog.manager, catalog.companyId, cash.id);
+    const cash = await payments.createCompanyPayment(
+      catalog.manager,
+      catalog.companyId,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Cash,
+      },
+    );
+    await payments.confirmCashPayment(
+      catalog.manager,
+      catalog.companyId,
+      cash.id,
+    );
     return bookingId;
   }
 
@@ -500,7 +607,9 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
       [issued.id],
     );
     expect(stored.rows[0].qr_token_hash).not.toBe(raw);
-    expect(stored.rows[0].qr_token_hash).toBe(createHash('sha256').update(raw).digest('hex'));
+    expect(stored.rows[0].qr_token_hash).toBe(
+      createHash('sha256').update(raw).digest('hex'),
+    );
     // The raw token must not be stored in any column of the row.
     const any = await pool.query<{ present: boolean }>(
       `SELECT (to_jsonb(t)::text LIKE '%' || $2 || '%') AS present
@@ -512,7 +621,9 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('refuses to issue tickets for an unpaid booking (no partial state)', async () => {
     const bookingId = await makeBooking(catalog.owner, 1); // HELD, unpaid
-    await expect(tickets.issueForOwner(catalog.owner, bookingId)).rejects.toMatchObject({
+    await expect(
+      tickets.issueForOwner(catalog.owner, bookingId),
+    ).rejects.toMatchObject({
       status: 409,
     });
     const stored = await pool.query<{ count: string }>(
@@ -524,8 +635,16 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('validates (checks in) a ticket once; a duplicate scan is rejected', async () => {
     const bookingId = await confirmedPaidBooking(catalog.owner, 1);
-    const [issued] = await tickets.issueForCompany(catalog.manager, catalog.companyId, bookingId);
-    const first = await tickets.validateTicket(catalog.manager, catalog.companyId, issued.id);
+    const [issued] = await tickets.issueForCompany(
+      catalog.manager,
+      catalog.companyId,
+      bookingId,
+    );
+    const first = await tickets.validateTicket(
+      catalog.manager,
+      catalog.companyId,
+      issued.id,
+    );
     expect(first.status).toBe('CHECKED_IN');
     await expect(
       tickets.validateTicket(catalog.manager, catalog.companyId, issued.id),
@@ -562,19 +681,36 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
 
   it('verifies a valid token and reports refunded bookings as invalid', async () => {
     const bookingId = await makeBooking(catalog.owner, 1);
-    const cash = await payments.createCompanyPayment(catalog.manager, catalog.companyId, randomUUID(), {
-      bookingId,
-      method: PaymentMethod.Cash,
-    });
-    await payments.confirmCashPayment(catalog.manager, catalog.companyId, cash.id);
+    const cash = await payments.createCompanyPayment(
+      catalog.manager,
+      catalog.companyId,
+      randomUUID(),
+      {
+        bookingId,
+        method: PaymentMethod.Cash,
+      },
+    );
+    await payments.confirmCashPayment(
+      catalog.manager,
+      catalog.companyId,
+      cash.id,
+    );
     const [issued] = await tickets.issueForOwner(catalog.owner, bookingId);
     const raw = issued.qrToken as string;
 
-    const valid = await tickets.verifyTicket(catalog.manager, catalog.companyId, raw);
+    const valid = await tickets.verifyTicket(
+      catalog.manager,
+      catalog.companyId,
+      raw,
+    );
     expect(valid.valid).toBe(true);
 
     await payments.refundPayment(catalog.manager, catalog.companyId, cash.id);
-    const afterRefund = await tickets.verifyTicket(catalog.manager, catalog.companyId, raw);
+    const afterRefund = await tickets.verifyTicket(
+      catalog.manager,
+      catalog.companyId,
+      raw,
+    );
     expect(afterRefund.valid).toBe(false);
     expect(afterRefund.reason).toBe('NOT_PAID');
   });
@@ -582,59 +718,99 @@ describe('Payments & Tickets (PostgreSQL integration)', () => {
   // === RLS / direct-write denial ==========================================
 
   it('denies direct authenticated writes to payments and tickets (RLS/grants)', async () => {
-    await transactions.run(async (tx) => {
-      await tx.query(`SET LOCAL role authenticated`);
-      await tx.query(`SELECT set_config('request.jwt.claims', $1, true)`, [
-        JSON.stringify({ sub: catalog.owner, role: 'authenticated' }),
-      ]);
-      await expect(
-        tx.query(
-          `INSERT INTO public.payments (booking_id, method, status, amount, currency, internal_reference)
+    await transactions
+      .run(async (tx) => {
+        await tx.query(`SET LOCAL role authenticated`);
+        await tx.query(`SELECT set_config('request.jwt.claims', $1, true)`, [
+          JSON.stringify({ sub: catalog.owner, role: 'authenticated' }),
+        ]);
+        await expect(
+          tx.query(
+            `INSERT INTO public.payments (booking_id, method, status, amount, currency, internal_reference)
            VALUES ($1, 'CASH', 'PENDING', 100, 'MRU', 'rls-x')`,
-          [randomUUID()],
-        ),
-      ).rejects.toMatchObject({ driverError: { code: '42501' } });
-      await tx.query(`ROLLBACK`).catch(() => undefined);
-    }).catch(() => undefined);
+            [randomUUID()],
+          ),
+        ).rejects.toMatchObject({ driverError: { code: '42501' } });
+        await tx.query(`ROLLBACK`).catch(() => undefined);
+      })
+      .catch(() => undefined);
   });
 
-  async function cleanup(companyId: string, users: readonly string[]): Promise<void> {
-    const triggers: Array<[string, string]> = [
-      ['public.booking_events', 'booking_events_append_only'],
-      ['public.bookings', 'bookings_no_delete'],
-      ['public.payments', 'payments_no_delete'],
-      ['public.tickets', 'tickets_no_delete'],
-      ['public.audit_logs', 'audit_logs_append_only'],
-    ];
-    for (const [table, trigger] of triggers) {
-      await pool.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`).catch(() => undefined);
-    }
+  async function cleanup(
+    companyId: string,
+    users: readonly string[],
+  ): Promise<void> {
+    // Reset fixture data on ONE pinned connection with triggers disabled via
+    // `session_replication_role = 'replica'`. This is ownership-independent —
+    // unlike `ALTER TABLE ... DISABLE TRIGGER`, which only the table owner may
+    // run and so silently failed on CI (where the tables are owned by a
+    // different role), leaving the append-only trigger active during teardown.
+    // Replica mode also relaxes FK triggers, so deletion order is not
+    // load-bearing. The setting is per-session, hence the dedicated client.
+    const client = await pool.connect();
     try {
-      // idempotency_records FK-references payments and bookings, so it must go first.
-      await pool.query(`DELETE FROM public.idempotency_records WHERE company_id = $1`, [companyId]);
-      await pool.query(
+      await client.query(`SET session_replication_role = 'replica'`);
+      await client.query(
+        `DELETE FROM public.idempotency_records WHERE company_id = $1`,
+        [companyId],
+      );
+      await client.query(
         `DELETE FROM public.tickets WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`,
         [companyId],
       );
-      await pool.query(`DELETE FROM public.audit_logs WHERE company_id = $1`, [companyId]);
-      await pool.query(`DELETE FROM public.payments WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`, [companyId]);
-      await pool.query(`DELETE FROM public.booking_events WHERE company_id = $1`, [companyId]);
-      await pool.query(`DELETE FROM public.seat_reservations WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`, [companyId]);
-      await pool.query(`DELETE FROM public.passengers WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`, [companyId]);
-      await pool.query(`DELETE FROM public.bookings WHERE company_id = $1`, [companyId]);
-    } finally {
-      for (const [table, trigger] of triggers) {
-        await pool.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`).catch(() => undefined);
+      await client.query(
+        `DELETE FROM public.audit_logs WHERE company_id = $1`,
+        [companyId],
+      );
+      await client.query(
+        `DELETE FROM public.payments WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`,
+        [companyId],
+      );
+      await client.query(
+        `DELETE FROM public.booking_events WHERE company_id = $1`,
+        [companyId],
+      );
+      await client.query(
+        `DELETE FROM public.seat_reservations WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`,
+        [companyId],
+      );
+      await client.query(
+        `DELETE FROM public.passengers WHERE booking_id IN (SELECT id FROM public.bookings WHERE company_id = $1)`,
+        [companyId],
+      );
+      await client.query(`DELETE FROM public.bookings WHERE company_id = $1`, [
+        companyId,
+      ]);
+      await client.query(`DELETE FROM public.trips WHERE company_id = $1`, [
+        companyId,
+      ]);
+      await client.query(
+        `DELETE FROM public.company_memberships WHERE company_id = $1`,
+        [companyId],
+      );
+      await client.query(`DELETE FROM public.routes WHERE company_id = $1`, [
+        companyId,
+      ]);
+      await client.query(`DELETE FROM public.buses WHERE company_id = $1`, [
+        companyId,
+      ]);
+      await client.query(
+        `DELETE FROM public.company_settings WHERE company_id = $1`,
+        [companyId],
+      );
+      await client.query(`DELETE FROM public.companies WHERE id = $1`, [
+        companyId,
+      ]);
+      for (const user of users) {
+        await client
+          .query(`DELETE FROM auth.users WHERE id = $1`, [user])
+          .catch(() => undefined);
       }
-    }
-    await pool.query(`DELETE FROM public.trips WHERE company_id = $1`, [companyId]);
-    await pool.query(`DELETE FROM public.company_memberships WHERE company_id = $1`, [companyId]);
-    await pool.query(`DELETE FROM public.routes WHERE company_id = $1`, [companyId]);
-    await pool.query(`DELETE FROM public.buses WHERE company_id = $1`, [companyId]);
-    await pool.query(`DELETE FROM public.company_settings WHERE company_id = $1`, [companyId]);
-    await pool.query(`DELETE FROM public.companies WHERE id = $1`, [companyId]);
-    for (const user of users) {
-      await pool.query(`DELETE FROM auth.users WHERE id = $1`, [user]).catch(() => undefined);
+    } finally {
+      await client
+        .query(`SET session_replication_role = 'origin'`)
+        .catch(() => undefined);
+      client.release();
     }
   }
 });

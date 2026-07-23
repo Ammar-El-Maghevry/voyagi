@@ -28,8 +28,12 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
+import { RateLimit } from '../../common/rate-limit/rate-limit.policies';
 import { CollectionResult } from '../../common/pagination/collection-result';
-import { buildPaginationMeta, resolvePagination } from '../../common/pagination/pagination';
+import {
+  buildPaginationMeta,
+  resolvePagination,
+} from '../../common/pagination/pagination';
 import { PaginationQueryDto } from '../../common/pagination/pagination-query.dto';
 import type { AuthenticatedPrincipal } from '../auth/authenticated-principal';
 import { CurrentPrincipal } from '../auth/decorators/current-principal.decorator';
@@ -52,7 +56,10 @@ const paymentCollectionResponse = {
     type: 'object',
     properties: {
       success: { type: 'boolean', example: true },
-      data: { type: 'array', items: { $ref: getSchemaPath(PaymentResponseDto) } },
+      data: {
+        type: 'array',
+        items: { $ref: getSchemaPath(PaymentResponseDto) },
+      },
       meta: { type: 'object' },
     },
   },
@@ -70,12 +77,18 @@ export class PassengerPaymentsController {
   ) {}
 
   @Post()
+  @RateLimit('paymentInit')
   @ApiOperation({ summary: 'Initiate an online payment for an owned booking.' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiCreatedResponse({ type: PaymentResponseDto })
   @ApiBadRequestResponse({ description: 'Invalid body or Idempotency-Key.' })
-  @ApiConflictResponse({ description: 'Idempotency conflict, booking not payable, or already settled.' })
-  @ApiUnprocessableEntityResponse({ description: 'The payment method is not allowed.' })
+  @ApiConflictResponse({
+    description:
+      'Idempotency conflict, booking not payable, or already settled.',
+  })
+  @ApiUnprocessableEntityResponse({
+    description: 'The payment method is not allowed.',
+  })
   @ApiNotFoundResponse({ description: 'No owned booking with this id.' })
   async create(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
@@ -83,12 +96,18 @@ export class PassengerPaymentsController {
     @Body() body: CreatePaymentDto,
   ): Promise<PaymentResponseDto> {
     return PaymentResponseDto.from(
-      await this.createPayment.passenger(principal.userId, key, body.toDomain()),
+      await this.createPayment.passenger(
+        principal.userId,
+        key,
+        body.toDomain(),
+      ),
     );
   }
 
   @Get()
-  @ApiOperation({ summary: 'List the authenticated passenger owner’s payments.' })
+  @ApiOperation({
+    summary: 'List the authenticated passenger owner’s payments.',
+  })
   @ApiOkResponse(paymentCollectionResponse)
   async list(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
@@ -103,21 +122,27 @@ export class PassengerPaymentsController {
   }
 
   @Get(':paymentId')
-  @ApiOperation({ summary: 'Read one payment owned by the authenticated passenger.' })
+  @ApiOperation({
+    summary: 'Read one payment owned by the authenticated passenger.',
+  })
   @ApiOkResponse({ type: PaymentResponseDto })
   @ApiNotFoundResponse({ description: 'No owned payment with this id.' })
   async get(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
     @Param('paymentId') paymentId: string,
   ): Promise<PaymentResponseDto> {
-    return PaymentResponseDto.from(await this.getPayment.owned(principal.userId, paymentId));
+    return PaymentResponseDto.from(
+      await this.getPayment.owned(principal.userId, paymentId),
+    );
   }
 }
 
 @ApiTags('company payments')
 @ApiBearerAuth('bearer')
 @ApiUnauthorizedResponse({ description: 'Authentication is required.' })
-@ApiForbiddenResponse({ description: 'Company permission or branch entitlement is missing.' })
+@ApiForbiddenResponse({
+  description: 'Company permission or branch entitlement is missing.',
+})
 @Controller({ path: 'companies/:companyId/payments', version: '1' })
 export class CompanyPaymentsController {
   constructor(
@@ -129,11 +154,17 @@ export class CompanyPaymentsController {
   ) {}
 
   @Post()
+  @RateLimit('paymentInit')
   @RequirePermissions(Permission.PaymentsConfirm)
-  @ApiOperation({ summary: 'Record a payment (e.g. cash) against a company booking.' })
+  @ApiOperation({
+    summary: 'Record a payment (e.g. cash) against a company booking.',
+  })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiCreatedResponse({ type: PaymentResponseDto })
-  @ApiConflictResponse({ description: 'Idempotency conflict, booking not payable, or already settled.' })
+  @ApiConflictResponse({
+    description:
+      'Idempotency conflict, booking not payable, or already settled.',
+  })
   async create(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
     @Param('companyId') companyId: string,
@@ -141,13 +172,20 @@ export class CompanyPaymentsController {
     @Body() body: CreatePaymentDto,
   ): Promise<PaymentResponseDto> {
     return PaymentResponseDto.from(
-      await this.createPayment.company(principal.userId, companyId, key, body.toDomain()),
+      await this.createPayment.company(
+        principal.userId,
+        companyId,
+        key,
+        body.toDomain(),
+      ),
     );
   }
 
   @Get()
   @RequirePermissions(Permission.PaymentsRead)
-  @ApiOperation({ summary: 'List company payments within the caller’s entitlement scope.' })
+  @ApiOperation({
+    summary: 'List company payments within the caller’s entitlement scope.',
+  })
   @ApiOkResponse(paymentCollectionResponse)
   async list(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
@@ -155,7 +193,11 @@ export class CompanyPaymentsController {
     @Query() query: PaginationQueryDto,
   ): Promise<CollectionResult<PaymentResponseDto>> {
     const pagination = resolvePagination(query);
-    const page = await this.listPayments.company(principal.userId, companyId, pagination);
+    const page = await this.listPayments.company(
+      principal.userId,
+      companyId,
+      pagination,
+    );
     return new CollectionResult(
       page.items.map(PaymentResponseDto.from),
       buildPaginationMeta(pagination.page, pagination.pageSize, page.total),
@@ -164,7 +206,9 @@ export class CompanyPaymentsController {
 
   @Get(':paymentId')
   @RequirePermissions(Permission.PaymentsRead)
-  @ApiOperation({ summary: 'Read one company payment within entitlement scope.' })
+  @ApiOperation({
+    summary: 'Read one company payment within entitlement scope.',
+  })
   @ApiOkResponse({ type: PaymentResponseDto })
   @ApiNotFoundResponse({ description: 'The scoped payment is not visible.' })
   async get(
@@ -178,12 +222,19 @@ export class CompanyPaymentsController {
   }
 
   @Post(':paymentId/confirm')
+  @RateLimit('paymentConfirm')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permission.PaymentsConfirm)
-  @ApiOperation({ summary: 'Confirm a pending cash payment; confirms the booking.' })
+  @ApiOperation({
+    summary: 'Confirm a pending cash payment; confirms the booking.',
+  })
   @ApiOkResponse({ type: PaymentResponseDto })
-  @ApiConflictResponse({ description: 'The payment is not confirmable or already settled.' })
-  @ApiUnprocessableEntityResponse({ description: 'Only cash payments are confirmed manually.' })
+  @ApiConflictResponse({
+    description: 'The payment is not confirmable or already settled.',
+  })
+  @ApiUnprocessableEntityResponse({
+    description: 'Only cash payments are confirmed manually.',
+  })
   @ApiNotFoundResponse({ description: 'The scoped payment is not visible.' })
   async confirm(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
@@ -196,11 +247,14 @@ export class CompanyPaymentsController {
   }
 
   @Post(':paymentId/refund')
+  @RateLimit('refund')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permission.PaymentsRefund)
   @ApiOperation({ summary: 'Fully refund a succeeded payment.' })
   @ApiOkResponse({ type: PaymentResponseDto })
-  @ApiConflictResponse({ description: 'The payment is not in a refundable state.' })
+  @ApiConflictResponse({
+    description: 'The payment is not in a refundable state.',
+  })
   @ApiNotFoundResponse({ description: 'The scoped payment is not visible.' })
   async refund(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
@@ -219,11 +273,17 @@ export class PaymentWebhookController {
   constructor(private readonly handleWebhook: HandlePaymentWebhookUseCase) {}
 
   @Post(':provider')
+  @RateLimit('webhook')
   @Public()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Receive a signed provider payment event (public, signature-verified).' })
+  @ApiOperation({
+    summary:
+      'Receive a signed provider payment event (public, signature-verified).',
+  })
   @ApiOkResponse({ description: 'The event was accepted (idempotent).' })
-  @ApiBadRequestResponse({ description: 'The webhook signature could not be verified.' })
+  @ApiBadRequestResponse({
+    description: 'The webhook signature could not be verified.',
+  })
   @ApiNotFoundResponse({ description: 'Unknown provider or payment.' })
   async receive(
     @Param('provider') provider: string,

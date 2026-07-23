@@ -1,9 +1,14 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE, APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { IdentityThrottlerGuard } from './common/rate-limit/identity-throttler.guard';
 import { LoggerModule } from 'nestjs-pino';
-import { configurations, validateEnvironment, type RateLimitConfig } from './config';
+import {
+  configurations,
+  validateEnvironment,
+  type RateLimitConfig,
+} from './config';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
 import { validationPipeOptions } from './common/validation/validation-pipe.options';
@@ -92,9 +97,9 @@ import { CommissionsModule } from './modules/commissions/commissions.module';
       provide: AUTHORIZATION_CONTEXT_RESOLVER,
       useExisting: DatabaseAuthorizationContextResolver,
     },
-    // Guards run in registration order: rate limiting, then authentication
-    // (secure by default), then authorization (permission enforcement).
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Guards run in registration order: rate limiting (identity/network keyed),
+    // then authentication (secure by default), then authorization.
+    { provide: APP_GUARD, useClass: IdentityThrottlerGuard },
     { provide: APP_GUARD, useExisting: AuthenticationGuard },
     { provide: APP_GUARD, useClass: AuthorizationGuard },
   ],

@@ -1,6 +1,7 @@
 import { VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import type { AppConfig, LoggingConfig } from '../config';
@@ -53,6 +54,14 @@ export function configureApp(app: NestExpressApplication): void {
   // Security baseline.
   app.use(helmet());
   app.enableCors(buildCorsOptions(config));
+
+  // Do not let shared caches store API responses. The API serves per-user,
+  // tenant-scoped and financial data; `no-store` is the conservative default and
+  // deliberately avoids inventing any (undocumented) public caching policy.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
 
   // Bounded request bodies.
   app.useBodyParser('json', { limit: appConfig.bodyLimit });
