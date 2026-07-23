@@ -71,6 +71,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
       return this.mapHttpException(exception);
     }
 
+    // Body-parser style client errors (oversized/malformed body) are not Nest
+    // HttpExceptions; map them to their stable 4xx code instead of a generic 500.
+    const bodyError = this.mapBodyParserError(exception);
+    if (bodyError) {
+      return bodyError;
+    }
+
     // Unknown/unexpected error: never expose its contents.
     return {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
@@ -78,6 +85,47 @@ export class AllExceptionsFilter implements ExceptionFilter {
         code: ErrorCode.INTERNAL_ERROR,
         message: 'An unexpected error occurred.',
       },
+      cause: exception,
+    };
+  }
+
+  /**
+   * Recognize safe-to-expose client errors thrown by the body parser (e.g.
+   * `PayloadTooLargeError` / malformed JSON), which carry a numeric status and
+   * `expose: true` but are not {@link HttpException}s. The client sees only a
+   * stable code and a generic message — never the parser's internals.
+   */
+  private mapBodyParserError(exception: unknown): MappedException | undefined {
+    if (typeof exception !== 'object' || exception === null) {
+      return undefined;
+    }
+    const error = exception as {
+      status?: unknown;
+      statusCode?: unknown;
+      expose?: unknown;
+      type?: unknown;
+    };
+    const status =
+      typeof error.status === 'number'
+        ? error.status
+        : typeof error.statusCode === 'number'
+          ? error.statusCode
+          : undefined;
+    if (status === undefined || status < 400 || status >= 500) {
+      return undefined;
+    }
+    if (error.expose !== true && typeof error.type !== 'string') {
+      return undefined;
+    }
+    const message =
+      status === HttpStatus.PAYLOAD_TOO_LARGE
+        ? 'The request payload is too large.'
+        : status === HttpStatus.BAD_REQUEST
+          ? 'The request body could not be parsed.'
+          : 'The request could not be processed.';
+    return {
+      status,
+      body: { code: this.mapStatusToCode(status), message },
       cause: exception,
     };
   }
@@ -131,6 +179,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
         return ErrorCode.BUSINESS_RULE_VIOLATION;
       case HttpStatus.TOO_MANY_REQUESTS:
         return ErrorCode.RATE_LIMIT_EXCEEDED;
+      case HttpStatus.PAYLOAD_TOO_LARGE:
+        return ErrorCode.PAYLOAD_TOO_LARGE;
       case HttpStatus.BAD_GATEWAY:
       case HttpStatus.SERVICE_UNAVAILABLE:
       case HttpStatus.GATEWAY_TIMEOUT:

@@ -49,7 +49,9 @@ export function buildPinoParams(config: ConfigService): Params {
             id: req.id,
             correlationId: getCorrelationId(req),
             method: req.method,
-            url: req.url,
+            // Path only — the query string is dropped so tokens/credentials that
+            // might appear as query parameters are never written to logs.
+            url: typeof req.url === 'string' ? req.url.split('?')[0] : req.url,
           };
         },
         res(res: ServerResponse) {

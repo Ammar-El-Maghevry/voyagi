@@ -1,0 +1,101 @@
+name: Backend Quality Gate
+
+# Full quality gate for the Voyagi backend. Every required check must pass for a
+# pull request to be mergeable. Runs against an isolated local Supabase/Postgres
+# started in the runner — never production or shared-development credentials.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least privilege: the gate only reads the repository.
+permissions:
+  contents: read
+
+# Supersede in-flight runs for the same ref.
+concurrency:
+  group: backend-quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Node 22 (current LTS): the pinned pnpm 11.9.0 requires Node >= 22.13, and
+  # Node 20 is being deprecated on GitHub Actions runners.
+  NODE_VERSION: '22'
+  PNPM_VERSION: '11.9.0'
+  # Pinned to the exact CLI verified locally to run `supabase db reset` and
+  # `supabase test db` (never `latest`).
+  SUPABASE_VERSION: '2.109.1'
+  # Local Supabase database exposed by `supabase start`.
+  DATABASE_URL: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+
+jobs:
+  quality-gate:
+    name: format, lint, typecheck, tests, build, db, security
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (full history for merge-base format check)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_VERSION }}
+
+      - name: Start local Supabase stack
+        run: supabase start
+
+      - name: Apply migrations from a clean database
+        run: supabase db reset
+
+      - name: Format check (branch-changed files only)
+        run: pnpm format:check
+
+      - name: Lint (zero warnings)
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests (includes architecture, migration-history, tooling guards)
+        run: pnpm test
+
+      - name: Integration tests (real PostgreSQL + RLS)
+        run: pnpm test:integration
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Build
+        run: pnpm build
+
+      - name: Database tests (pgTAP)
+        run: supabase test db
+
+      - name: Secret scan
+        run: pnpm security:secrets
+
+      - name: Dependency audit
+        run: pnpm security:audit
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop --no-backup

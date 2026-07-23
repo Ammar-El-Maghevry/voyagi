@@ -10,10 +10,13 @@
   "scripts": {
     "build": "pnpm --filter @voyagi/backend run build",
     "lint": "pnpm --filter @voyagi/backend run lint",
+    "format:check": "pnpm --filter @voyagi/backend run format:check",
     "typecheck": "pnpm --filter @voyagi/backend run typecheck",
     "test": "pnpm --filter @voyagi/backend run test",
     "test:integration": "pnpm --filter @voyagi/backend run test:integration",
     "test:e2e": "pnpm --filter @voyagi/backend run test:e2e",
+    "security:secrets": "node apps/backend/scripts/scan-secrets.cjs",
+    "security:audit": "pnpm audit --prod --audit-level high",
     "start:dev": "pnpm --filter @voyagi/backend run start:dev"
   }
 }

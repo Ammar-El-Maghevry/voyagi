@@ -14,6 +14,7 @@ import {
   resolvePagination,
 } from '../../common/pagination/pagination';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
+import { RateLimit } from '../../common/rate-limit/rate-limit.policies';
 import { Permission } from '../authorization/permission.enum';
 import { AuditService } from './audit.service';
 import { ListAuditLogsQueryDto } from './dto/list-audit-logs-query.dto';
@@ -27,9 +28,14 @@ import { AuditLogResponseDto } from './dto/audit-log-response.dto';
   required: true,
   description: 'Company scope, authorized by the global authorization guard.',
 })
-@ApiUnauthorizedResponse({ description: 'Missing, expired, or invalid credentials.' })
-@ApiForbiddenResponse({ description: 'Missing company access or audit.read permission.' })
+@ApiUnauthorizedResponse({
+  description: 'Missing, expired, or invalid credentials.',
+})
+@ApiForbiddenResponse({
+  description: 'Missing company access or audit.read permission.',
+})
 @Controller({ path: 'audit-logs', version: '1' })
+@RateLimit('auditRead')
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
 

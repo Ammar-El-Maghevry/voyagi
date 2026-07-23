@@ -944,3 +944,121 @@ external monitoring vendor, retention policy, or alert threshold is introduced.
 Explicitly **not** implemented: notifications, reports/analytics, partial
 refunds, commission clawbacks/settlements, payout providers, QR image/PDF
 rendering, and boarding-device APIs beyond the documented `validate` operation.
+
+## Phase 16–17: API hardening and quality gate
+
+### API hardening (Phase 16)
+
+- **Public-route allowlist.** Exactly six routes opt out of authentication:
+  `health/live`, `health/ready`, `trips/search`, `trips/:tripId/availability`,
+  `trips/:tripId/price-preview`, and the signature-verified
+  `webhooks/payments/:provider`. A reflection-based guardrail test
+  (`route-security-guardrails.integration-spec.ts`) fails the build if any other
+  route becomes public, if a permission decorator references a permission absent
+  from the central catalog, or if a write route is neither permission-gated nor a
+  documented ownership route.
+- **Per-category rate limits.** A global throttler (`RATE_LIMIT_LIMIT` /
+  `RATE_LIMIT_TTL`) plus configuration-driven category overrides for public
+  reads, authenticated reads, writes, booking creation, payment initiation,
+  payment confirmation, refunds, provider webhooks, ticket verification, ticket
+  validation and audit reads (`RATE_LIMIT_*` env vars). No production limits are
+  invented — categories default to the global limit and are tightened by env.
+  The `IdentityThrottlerGuard` keys buckets on a hash of the bearer token when
+  present (so users never share a bucket) and otherwise on `req.ip` (spoofed
+  `X-Forwarded-For` cannot bypass because `trust proxy` is off by default). `429`
+  responses use the stable `RATE_LIMIT_EXCEEDED` envelope and leak no key.
+- **`Cache-Control: no-store`** on every API response — the API serves per-user,
+  tenant-scoped and financial data; no public caching policy is invented.
+- **Payload limits.** JSON/urlencoded bodies are bounded by `BODY_LIMIT`;
+  oversized bodies return a stable `413 PAYLOAD_TOO_LARGE` and malformed JSON a
+  `400` (body-parser errors are mapped in the global filter, not leaked as 500s).
+  The raw webhook body remains available for signature verification.
+- **Error sanitization.** The global filter maps every failure to a stable code;
+  unknown errors become a generic 500. No stack, SQL, constraint name, provider
+  payload or cross-tenant existence is exposed.
+- **Secret and log redaction.** Structured request/response logs use an allowlist
+  serializer (id, correlationId, method, path, status) and remove
+  `authorization`/`cookie`/`set-cookie` headers; the request URL is logged
+  path-only so query-string tokens are never written. Bodies, arbitrary headers,
+  QR tokens, fingerprints and passenger PII are never logged.
+- **Webhook replay protection** (unchanged from Phase 12): verify signature
+  before trusting the payload; terminal-state + `uq_payment_provider_ref`
+  idempotency; wrong amount/currency/reference never settles; rate limiting is
+  defense-in-depth only, never the replay control.
+- **CORS.** Explicit allowlist passed verbatim to the `cors` library (exact
+  matching); production denies all origins when unset (no wildcard fallback);
+  never a literal `*`; `Authorization` and `Idempotency-Key` are allowlisted.
+- **Swagger/OpenAPI.** Configuration-gated, disabled in production by default; an
+  OpenAPI security test generates the real document and asserts bearer auth is
+  documented, the Idempotency-Key header is present, and no `qr_token_hash`,
+  password hash, fingerprint, signature header or provider secret appears.
+
+### Quality gate (Phase 17)
+
+- **Forward-only Prettier gate** (`pnpm format:check`). Checks only files this
+  branch adds/changes (committed vs merge-base with `main`, plus staged, unstaged
+  and untracked non-ignored files, deduplicated, NUL-safe). ~200 pre-existing
+  files do not yet satisfy the Prettier config; **full-repo normalization is
+  deferred to a separate formatting-only PR**. `pnpm lint` (ESLint,
+  `--max-warnings 0`) remains the enforced whole-repo style gate.
+- **Architecture guardrails** — controllers import no database layer and contain
+  no SQL; guards touch no domain tables; providers stay behind ports; tickets are
+  independent of the concrete payment provider; no in-memory repo in production;
+  no Phase-18 deployment code.
+- **Migration-history guardrail** — migrations 001–017 are unchanged by this
+  branch, uniquely numbered/timestamped and ordered, security-definer functions
+  pin an empty `search_path`, and no migration 018 exists.
+- **Secret scanner** (`pnpm security:secrets`). Deterministic offline scan of
+  tracked files; reports only file/line/rule (never the value); detects private
+  keys, cloud access keys, provider/CI tokens and credentialed remote DB URLs;
+  local (single-label / 127.0.0.1) DB URLs are treated as documented fixtures.
+- **Dependency audit** (`pnpm security:audit` → `pnpm audit --prod
+  --audit-level high`). Fails on HIGH. Two HIGH transitive advisories (lodash
+  `_.template`, js-yaml merge-key) were **remediated by upgrading the direct
+  dependency `@nestjs/swagger` from ^8.1.0 to ^11.4.6** (the NestJS-11-aligned
+  major, which vendors patched lodash/js-yaml). Audit now reports no known
+  vulnerabilities; no advisory is suppressed and the threshold is not lowered.
+- **CI quality gate** — `.github/workflows/backend-quality-gate.yml`: PR + push to
+  `main`, `permissions: contents: read`, concurrency-cancel, 30-minute timeout,
+  pinned Node 22 / pnpm 11.9.0 / **Supabase CLI 2.109.1**, frozen lockfile,
+  isolated in-runner Supabase, and every gate (format, lint, typecheck, unit,
+  integration, e2e, build, `supabase db reset`, pgTAP, secret scan, dependency
+  audit). No deployment or publishing. The workflow is statically validated; a
+  real GitHub Actions run still requires a Pull Request.
+
+### Consolidated security test matrices (Phase 17)
+
+Four table-driven matrices consolidate the security guarantees, backed by typed
+fixtures under `test/support/factories/`:
+
+- **Consolidated RLS matrix** (`test/integration/rls-matrix.integration-spec.ts`)
+  — one deterministic two-tenant graph seeded on a pinned connection inside a
+  rolled-back transaction, asserted against the real non-bypassing `authenticated`
+  / `anon` roles across all **19 tenant-owned tables** (**152 RLS assertions**):
+  anonymous denial, owner/company/branch reads, wrong-tenant / wrong-branch /
+  inactive-membership / unrelated-user denial, and direct INSERT/UPDATE/DELETE
+  refusal. Documented exceptions: profiles self-read/update, own-membership read,
+  owning-agent commission read.
+- **Repository SQL-scope matrix** (`src/tooling/repository-sql-scope.spec.ts`) —
+  proves every tenant-owned repository filters by an explicit parameterized
+  `company_id` / owner / branch predicate (the backend role may bypass RLS), and
+  that no repository concatenates a request value into SQL (every `${…}` is a
+  static identifier or `$n` placeholder).
+- **Abuse & malformed-input matrix**
+  (`src/common/validation/abuse-input-matrix.spec.ts`) — routes privileged-field
+  mass-assignment, malformed ids/uuids/enums/primitives and SQL-injection strings
+  through the real global validation policy; **plus a header/parser abuse e2e**
+  (`test/abuse-headers.e2e-spec.ts`) and a real-PostgreSQL **SQL-injection matrix**
+  (`test/integration/sql-injection.integration-spec.ts`) proving payloads stay
+  data (structure unchanged, no cross-tenant leak, typed 22P02 on id casts).
+- **Fourteen-journey manifest** (`test/support/journeys/journey-manifest.ts` +
+  `test/journey-manifest.integration-spec.ts`) — a typed map of each critical
+  journey to concrete e2e / integration / migration proofs, with a
+  machine-checkable test that fails if a journey loses its e2e or required
+  integration proof, an entry is removed, or a referenced test/migration is gone.
+
+### Local verification vs remote
+
+All gates above are run and pass locally except the remote GitHub Actions
+execution, which cannot run without a push/PR. Phase 18 deployment remains
+explicitly out of scope.
