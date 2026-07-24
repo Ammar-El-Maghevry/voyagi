@@ -1,0 +1,54 @@
+# Docker build context exclusions.
+# Keep the build context minimal and free of secrets, VCS metadata, tests,
+# build output and local tooling state. Only workspace manifests, backend
+# source and the pnpm lockfile are needed to build the production image.
+
+# Dependencies / build output (reinstalled/rebuilt inside the image)
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/*.tsbuildinfo
+
+# Secrets & environment — NEVER copy these into the build context
+**/.env
+**/.env.*
+!**/.env.example
+
+# Source control & CI metadata
+.git
+.github
+.gitignore
+.gitattributes
+
+# Tests, specs and test fixtures (not needed at runtime)
+**/*.spec.ts
+**/*.integration-spec.ts
+**/*.e2e-spec.ts
+apps/backend/test
+
+# Local Supabase state, migrations and database tooling (not run in the image)
+supabase/.temp
+supabase/.branches
+supabase/.env
+
+# Docker & compose (not needed inside the image)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Documentation & architecture (not needed at runtime)
+docs
+architecture
+**/*.md
+!apps/backend/README.md
+
+# Editor / OS noise
+.DS_Store
+.vscode
+.idea
+*.log
+
+# Other apps not built by this image
+apps/dashboard
+apps/mobile

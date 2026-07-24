@@ -20,4 +20,6 @@ export const appConfig = registerAs('app', () => ({
   bodyLimit: process.env.BODY_LIMIT ?? '100kb',
   // Raw `trust proxy` setting for Express; `undefined` leaves the default off.
   trustProxy: process.env.TRUST_PROXY,
+  // Hard deadline (ms) for graceful shutdown before the process force-exits.
+  shutdownTimeoutMs: parseInteger(process.env.SHUTDOWN_TIMEOUT_MS, 15_000),
 }));

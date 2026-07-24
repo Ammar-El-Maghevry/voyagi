@@ -200,6 +200,27 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(0)
   AUTH_JWKS_COOLDOWN_MS?: number;
+
+  // --- Payments (Phase 12 / 18.1) ---
+  // Provider registration mode. Production defaults to `disabled` (no adapter);
+  // non-production defaults to `test`. Production config validation rejects
+  // `test`. The test-provider secret is validated where it is consumed.
+  @IsOptional()
+  @IsIn(['disabled', 'test'])
+  PAYMENTS_PROVIDER_MODE?: string;
+
+  @IsOptional()
+  @IsString()
+  PAYMENTS_TEST_WEBHOOK_SECRET?: string;
+
+  // --- Shutdown (Phase 18.1) ---
+  // Hard deadline (ms) for graceful shutdown before the process force-exits.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1000)
+  @Max(120000)
+  SHUTDOWN_TIMEOUT_MS?: number;
 }
 
 /**

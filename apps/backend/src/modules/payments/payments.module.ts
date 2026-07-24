@@ -10,8 +10,15 @@ import { PAYMENTS_REPOSITORY } from './payments.repository';
 import { PaymentsService } from './payments.service';
 import { PostgresPaymentsRepository } from './postgres-payments.repository';
 import { PaymentReferenceGenerator } from './payment-reference.generator';
-import { PAYMENT_PROVIDERS, type PaymentProvider } from './payment-provider.port';
+import {
+  PAYMENT_PROVIDERS,
+  type PaymentProvider,
+} from './payment-provider.port';
 import { TestPaymentProvider } from './test-payment.provider';
+import {
+  resolvePaymentsProviderMode,
+  resolveTestWebhookSecret,
+} from './payments.provider-config';
 import {
   ConfirmPaymentUseCase,
   CreatePaymentUseCase,
@@ -22,13 +29,23 @@ import {
 } from './payment.use-cases';
 
 /**
- * Test-only shared secret for the deterministic {@link TestPaymentProvider}.
- * It is NOT a production provider credential — real provider adapters (and their
- * real secrets, sourced from configuration) are deferred until their contracts
- * are documented. Overridable via `PAYMENTS_TEST_WEBHOOK_SECRET`.
+ * Registered payment-provider adapters.
+ *
+ * The provider mode is resolved from the environment: `disabled` (production
+ * default) registers NO adapter, so every payment mutation fails safely with a
+ * stable provider-unavailable error; `test` (non-production default) registers
+ * ONLY the deterministic {@link TestPaymentProvider}. No real provider adapter
+ * is integrated yet — production payments remain blocked until a documented
+ * provider adapter and credentials are supplied in a later phase. The test
+ * secret is never the built-in placeholder (see {@link resolveTestWebhookSecret}).
  */
-const TEST_WEBHOOK_SECRET =
-  process.env.PAYMENTS_TEST_WEBHOOK_SECRET ?? 'voyagi-test-webhook-secret';
+function buildPaymentProviders(
+  env: NodeJS.ProcessEnv,
+): readonly PaymentProvider[] {
+  const mode = resolvePaymentsProviderMode(env);
+  if (mode !== 'test') return [];
+  return [new TestPaymentProvider(resolveTestWebhookSecret(env))];
+}
 
 @Module({
   imports: [CommissionsModule, AuditModule],
@@ -41,9 +58,8 @@ const TEST_WEBHOOK_SECRET =
     { provide: PAYMENTS_REPOSITORY, useClass: PostgresPaymentsRepository },
     {
       provide: PAYMENT_PROVIDERS,
-      useFactory: (): readonly PaymentProvider[] => [
-        new TestPaymentProvider(TEST_WEBHOOK_SECRET),
-      ],
+      useFactory: (): readonly PaymentProvider[] =>
+        buildPaymentProviders(process.env),
     },
     PaymentsService,
     PaymentReferenceGenerator,
