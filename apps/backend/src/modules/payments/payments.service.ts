@@ -10,7 +10,10 @@ import { Permission } from '../authorization/permission.enum';
 import { AUDIT_WRITER, type AuditWriterPort } from '../audit/audit.service';
 import { CommissionStatus } from '../commissions/commission-status';
 import { CommissionsService } from '../commissions/commissions.service';
-import { resolveEntitlements, type Entitlement } from '../identity/entitlements';
+import {
+  resolveEntitlements,
+  type Entitlement,
+} from '../identity/entitlements';
 import { isUuid, parsePositiveBigInt } from '../identity/identifier.util';
 import {
   BookingNotPayableError,
@@ -23,6 +26,7 @@ import {
   PaymentNotConfirmableError,
   PaymentNotFoundError,
   PaymentNotRefundableError,
+  PaymentProviderUnavailableError,
   PaymentReferenceUnavailableError,
 } from './payment.errors';
 import { PaymentReferenceGenerator } from './payment-reference.generator';
@@ -56,9 +60,17 @@ const REFERENCE_ATTEMPTS = 3;
 @Injectable()
 export class PaymentsService {
   private readonly providers: readonly PaymentProvider[];
+  /**
+   * Payments are enabled only when at least one provider adapter is registered.
+   * In production the provider mode defaults to `disabled` (no adapter), so the
+   * whole payment mutation surface fails safe until a real provider adapter and
+   * credentials are supplied. Reads (get/list) remain available.
+   */
+  private readonly paymentsEnabled: boolean;
 
   constructor(
-    @Inject(PAYMENTS_REPOSITORY) private readonly repository: PaymentsRepository,
+    @Inject(PAYMENTS_REPOSITORY)
+    private readonly repository: PaymentsRepository,
     private readonly db: DatabaseService,
     private readonly transactions: TransactionManager,
     private readonly references: PaymentReferenceGenerator,
@@ -67,6 +79,17 @@ export class PaymentsService {
     @Optional() @Inject(AUDIT_WRITER) private readonly audit?: AuditWriterPort,
   ) {
     this.providers = providers;
+    this.paymentsEnabled = providers.length > 0;
+  }
+
+  /**
+   * Fail safely — before any state is read or mutated — when no payment provider
+   * is enabled. Guards every payment mutation so a disabled deployment never
+   * creates/settles a payment, confirms a booking, issues a ticket or writes a
+   * commission.
+   */
+  private assertPaymentsEnabled(): void {
+    if (!this.paymentsEnabled) throw new PaymentProviderUnavailableError();
   }
 
   // --- Creation ------------------------------------------------------------
@@ -76,6 +99,7 @@ export class PaymentsService {
     idempotencyKey: string | undefined,
     input: CreatePaymentInput,
   ): Promise<Payment> {
+    this.assertPaymentsEnabled();
     this.validateCreate(actorUserId, idempotencyKey, input);
     // Passengers settle online; CASH is confirmed in person by staff.
     if (!isOnlineMethod(input.method)) {
@@ -98,7 +122,15 @@ export class PaymentsService {
         input.bookingId,
       );
       if (!booking) throw new PaymentBookingNotFoundError();
-      return this.createClaimed(tx, booking, actorUserId, key, fingerprint, input, 'owner');
+      return this.createClaimed(
+        tx,
+        booking,
+        actorUserId,
+        key,
+        fingerprint,
+        input,
+        'owner',
+      );
     });
   }
 
@@ -108,6 +140,7 @@ export class PaymentsService {
     idempotencyKey: string | undefined,
     input: CreatePaymentInput,
   ): Promise<Payment> {
+    this.assertPaymentsEnabled();
     this.validateCreate(actorUserId, idempotencyKey, input);
     const key = idempotencyKey as string;
     const { company, scope } = await this.companyScope(
@@ -131,7 +164,15 @@ export class PaymentsService {
         input.bookingId,
       );
       if (!booking) throw new PaymentBookingNotFoundError();
-      return this.createClaimed(tx, booking, actorUserId, key, fingerprint, input, 'company');
+      return this.createClaimed(
+        tx,
+        booking,
+        actorUserId,
+        key,
+        fingerprint,
+        input,
+        'company',
+      );
     });
   }
 
@@ -153,7 +194,13 @@ export class PaymentsService {
     );
     if (claim.kind === 'conflict') throw new PaymentIdempotencyConflictError();
     if (claim.kind === 'replay') {
-      const replay = await this.loadPayment(tx, booking, actorUserId, claim.paymentId as string, scope);
+      const replay = await this.loadPayment(
+        tx,
+        booking,
+        actorUserId,
+        claim.paymentId as string,
+        scope,
+      );
       if (!replay) throw new PaymentNotFoundError();
       return replay;
     }
@@ -168,7 +215,11 @@ export class PaymentsService {
 
     let paymentId: string | null = null;
     let internalReference = '';
-    for (let attempt = 0; attempt < REFERENCE_ATTEMPTS && !paymentId; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < REFERENCE_ATTEMPTS && !paymentId;
+      attempt += 1
+    ) {
       const reference = this.references.generate();
       paymentId = await this.repository.insertPayment(tx, {
         bookingId: booking.bookingId,
@@ -219,16 +270,29 @@ export class PaymentsService {
       paymentId,
     );
 
-    const payment = await this.loadPayment(tx, booking, actorUserId, paymentId, scope);
+    const payment = await this.loadPayment(
+      tx,
+      booking,
+      actorUserId,
+      paymentId,
+      scope,
+    );
     if (!payment) throw new PaymentNotFoundError();
     return payment;
   }
 
   // --- Reads ---------------------------------------------------------------
 
-  async getOwnedPayment(actorUserId: string, paymentId: string): Promise<Payment> {
+  async getOwnedPayment(
+    actorUserId: string,
+    paymentId: string,
+  ): Promise<Payment> {
     this.assertPaymentId(paymentId);
-    const payment = await this.repository.findPaymentForOwner(this.db, actorUserId, paymentId);
+    const payment = await this.repository.findPaymentForOwner(
+      this.db,
+      actorUserId,
+      paymentId,
+    );
     if (!payment) throw new PaymentNotFoundError();
     return payment;
   }
@@ -237,7 +301,11 @@ export class PaymentsService {
     actorUserId: string,
     pagination: ResolvedPagination,
   ): Promise<PaymentPage> {
-    return this.repository.listPaymentsForOwner(this.db, actorUserId, pagination);
+    return this.repository.listPaymentsForOwner(
+      this.db,
+      actorUserId,
+      pagination,
+    );
   }
 
   async getCompanyPayment(
@@ -245,9 +313,18 @@ export class PaymentsService {
     companyId: string,
     paymentId: string,
   ): Promise<Payment> {
-    const { company, scope } = await this.companyScope(actorUserId, companyId, Permission.PaymentsRead);
+    const { company, scope } = await this.companyScope(
+      actorUserId,
+      companyId,
+      Permission.PaymentsRead,
+    );
     this.assertPaymentId(paymentId);
-    const payment = await this.repository.findPaymentForCompany(this.db, company, scope, paymentId);
+    const payment = await this.repository.findPaymentForCompany(
+      this.db,
+      company,
+      scope,
+      paymentId,
+    );
     if (!payment) throw new PaymentNotFoundError();
     return payment;
   }
@@ -257,8 +334,17 @@ export class PaymentsService {
     companyId: string,
     pagination: ResolvedPagination,
   ): Promise<PaymentPage> {
-    const { company, scope } = await this.companyScope(actorUserId, companyId, Permission.PaymentsRead);
-    return this.repository.listPaymentsForCompany(this.db, company, scope, pagination);
+    const { company, scope } = await this.companyScope(
+      actorUserId,
+      companyId,
+      Permission.PaymentsRead,
+    );
+    return this.repository.listPaymentsForCompany(
+      this.db,
+      company,
+      scope,
+      pagination,
+    );
   }
 
   // --- Confirmation / refund ----------------------------------------------
@@ -268,17 +354,35 @@ export class PaymentsService {
     companyId: string,
     paymentId: string,
   ): Promise<Payment> {
+    this.assertPaymentsEnabled();
     this.assertPaymentId(paymentId);
-    const { company, scope } = await this.companyScope(actorUserId, companyId, Permission.PaymentsConfirm);
+    const { company, scope } = await this.companyScope(
+      actorUserId,
+      companyId,
+      Permission.PaymentsConfirm,
+    );
     return this.transactions.run(async (tx) => {
-      const locked = await this.repository.lockPaymentForCompany(tx, company, scope, paymentId);
+      const locked = await this.repository.lockPaymentForCompany(
+        tx,
+        company,
+        scope,
+        paymentId,
+      );
       if (!locked) throw new PaymentNotFoundError();
       if (locked.method !== PaymentMethod.Cash) {
-        throw new PaymentMethodNotAllowedError('Only cash payments are confirmed manually.');
+        throw new PaymentMethodNotAllowedError(
+          'Only cash payments are confirmed manually.',
+        );
       }
-      if (locked.status !== PaymentStatus.Pending) throw new PaymentNotConfirmableError();
+      if (locked.status !== PaymentStatus.Pending)
+        throw new PaymentNotConfirmableError();
 
-      const succeeded = await this.settle(tx, locked, PaymentStatus.Pending, actorUserId);
+      const succeeded = await this.settle(
+        tx,
+        locked,
+        PaymentStatus.Pending,
+        actorUserId,
+      );
       return succeeded;
     });
   }
@@ -288,14 +392,25 @@ export class PaymentsService {
     companyId: string,
     paymentId: string,
   ): Promise<Payment> {
+    this.assertPaymentsEnabled();
     this.assertPaymentId(paymentId);
-    const { company, scope } = await this.companyScope(actorUserId, companyId, Permission.PaymentsRefund);
+    const { company, scope } = await this.companyScope(
+      actorUserId,
+      companyId,
+      Permission.PaymentsRefund,
+    );
     return this.transactions.run(async (tx) => {
-      const locked = await this.repository.lockPaymentForCompany(tx, company, scope, paymentId);
+      const locked = await this.repository.lockPaymentForCompany(
+        tx,
+        company,
+        scope,
+        paymentId,
+      );
       if (!locked) throw new PaymentNotFoundError();
       // Full refund only: SUCCEEDED -> REFUNDED. Partial-refund amounts have no
       // schema home, so they are deferred (see README).
-      if (locked.status !== PaymentStatus.Succeeded) throw new PaymentNotRefundableError();
+      if (locked.status !== PaymentStatus.Succeeded)
+        throw new PaymentNotRefundableError();
 
       const refunded = await this.repository.transitionPayment(tx, {
         paymentId: locked.id,
@@ -352,7 +467,10 @@ export class PaymentsService {
     rawBody: Buffer,
     headers: Readonly<Record<string, string | string[] | undefined>>,
   ): Promise<{ received: true }> {
-    const provider = this.providers.find((candidate) => candidate.name === providerName);
+    this.assertPaymentsEnabled();
+    const provider = this.providers.find(
+      (candidate) => candidate.name === providerName,
+    );
     if (!provider) throw new PaymentNotFoundError();
 
     // Verify signature and parse BEFORE any state is read or mutated.
@@ -364,17 +482,21 @@ export class PaymentsService {
         event.internalReference,
       );
       if (!locked) throw new PaymentNotFoundError();
-      if (!provider.handlesMethod(locked.method)) throw new PaymentNotFoundError();
+      if (!provider.handlesMethod(locked.method))
+        throw new PaymentNotFoundError();
 
       // The event must map to this exact payment: matching provider reference
       // (when already stored) and the booking-snapshot amount and currency. A
       // mismatch never mutates state and never marks a payment successful.
       if (
-        (locked.providerReference && locked.providerReference !== event.providerReference) ||
+        (locked.providerReference &&
+          locked.providerReference !== event.providerReference) ||
         event.amount !== locked.amount ||
         event.currency !== locked.currency
       ) {
-        throw new PaymentMethodNotAllowedError('The webhook does not match the payment.');
+        throw new PaymentMethodNotAllowedError(
+          'The webhook does not match the payment.',
+        );
       }
 
       // Duplicate / out-of-order delivery: a terminal payment is a no-op.
@@ -387,7 +509,13 @@ export class PaymentsService {
       }
 
       if (target === PaymentStatus.Succeeded) {
-        await this.settle(tx, locked, locked.status, null, event.providerReference);
+        await this.settle(
+          tx,
+          locked,
+          locked.status,
+          null,
+          event.providerReference,
+        );
       } else {
         await this.repository.transitionPayment(tx, {
           paymentId: locked.id,
@@ -509,8 +637,13 @@ export class PaymentsService {
   }
 
   private providerForMethod(method: PaymentMethod): PaymentProvider {
-    const provider = this.providers.find((candidate) => candidate.handlesMethod(method));
-    if (!provider) throw new PaymentMethodNotAllowedError('No provider is configured for this method.');
+    const provider = this.providers.find((candidate) =>
+      candidate.handlesMethod(method),
+    );
+    if (!provider)
+      throw new PaymentMethodNotAllowedError(
+        'No provider is configured for this method.',
+      );
     return provider;
   }
 
@@ -522,8 +655,15 @@ export class PaymentsService {
     if (!isUuid(actorUserId)) throw new PaymentForbiddenError();
     const company = parsePositiveBigInt(companyId);
     if (!company) throw new PaymentNotFoundError();
-    const memberships = await this.repository.findMemberships(this.db, actorUserId, company);
-    return { company, scope: this.accessScope(resolveEntitlements(memberships), permission) };
+    const memberships = await this.repository.findMemberships(
+      this.db,
+      actorUserId,
+      company,
+    );
+    return {
+      company,
+      scope: this.accessScope(resolveEntitlements(memberships), permission),
+    };
   }
 
   private accessScope(
@@ -536,7 +676,8 @@ export class PaymentsService {
       if (!entitlement.permissions.includes(permission)) continue;
       if (entitlement.branchAccess.kind === 'company-wide') companyWide = true;
       if (entitlement.branchAccess.kind === 'restricted') {
-        for (const branchId of entitlement.branchAccess.branchIds) branchIds.add(branchId);
+        for (const branchId of entitlement.branchAccess.branchIds)
+          branchIds.add(branchId);
       }
     }
     return { companyWide, branchIds: [...branchIds] };
@@ -547,7 +688,9 @@ export class PaymentsService {
   }
 
   private fingerprint(payload: unknown): string {
-    return createHash('sha256').update(this.canonicalJson(payload)).digest('hex');
+    return createHash('sha256')
+      .update(this.canonicalJson(payload))
+      .digest('hex');
   }
 
   private canonicalJson(value: unknown): string {
@@ -559,7 +702,9 @@ export class PaymentsService {
         .filter(([, item]) => item !== undefined)
         .sort(([left], [right]) => left.localeCompare(right));
       return `{${entries
-        .map(([key, item]) => `${JSON.stringify(key)}:${this.canonicalJson(item)}`)
+        .map(
+          ([key, item]) => `${JSON.stringify(key)}:${this.canonicalJson(item)}`,
+        )
         .join(',')}}`;
     }
     return JSON.stringify(value) ?? 'null';

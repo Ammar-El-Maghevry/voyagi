@@ -3,7 +3,8 @@
   "rootDir": "..",
   "testEnvironment": "node",
   "testRegex": ".integration-spec.ts$",
-  "setupFiles": ["reflect-metadata"],
+  "maxWorkers": 1,
+  "setupFiles": ["reflect-metadata", "<rootDir>/test/setup-test-secret.ts"],
   "transform": {
     "^.+\\.ts$": ["ts-jest", { "tsconfig": "<rootDir>/tsconfig.json" }]
   }

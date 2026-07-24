@@ -24,8 +24,8 @@ architecture/  architecture documents (source of truth)
 
 ## Requirements
 
-- Node.js `>= 20` (repository developed on Node 26)
-- pnpm `>= 11`
+- Node.js `>= 22.13.0` (required by pnpm 11.9.0; repository developed on Node 26)
+- pnpm `>= 11` (pinned to `pnpm@11.9.0` via `packageManager`)
 
 ## Getting started
 
@@ -124,19 +124,27 @@ of the database and never fails because of a database outage.
 Feature modules obtain the abstractions by injection (the module is global):
 
 ```ts
-import { DatabaseService, TransactionManager } from '../../infrastructure/database';
+import {
+  DatabaseService,
+  TransactionManager,
+} from "../../infrastructure/database";
 
 // Single query — always parameterized (never string-interpolate user input):
-await this.database.query('SELECT id FROM trips WHERE company_id = $1', [companyId]);
+await this.database.query("SELECT id FROM trips WHERE company_id = $1", [
+  companyId,
+]);
 
 // Atomic multi-statement work:
 await this.transactions.run(async (tx) => {
-  await tx.query('INSERT INTO bookings (...) VALUES ($1, ...)', [/* ... */]);
-  await tx.query('INSERT INTO booking_events (...) VALUES ($1, ...)', [/* ... */]);
+  await tx.query("INSERT INTO bookings (...) VALUES ($1, ...)", [/* ... */]);
+  await tx.query("INSERT INTO booking_events (...) VALUES ($1, ...)", [
+    /* ... */
+  ]);
 }); // COMMIT on success, ROLLBACK on any thrown error; the client is always released.
 ```
 
 Rules for repositories added later:
+
 - always pass values via query parameters; never interpolate user input into SQL;
 - accept a `DatabaseExecutor` so a repository works both ambiently and inside a
   transaction; do **not** call `transactions.run` inside another `run` callback
@@ -152,7 +160,10 @@ Rules for repositories added later:
 ### Graceful shutdown
 
 The connection pool is closed on `SIGTERM`/`SIGINT` via `onApplicationShutdown`,
-so in-flight queries can finish and connections are released cleanly.
+so in-flight queries can finish and connections are released cleanly. A bounded
+shutdown watchdog (`SHUTDOWN_TIMEOUT_MS`, default 15000) force-exits if graceful
+shutdown overruns the deadline, so the process can never hang (see the Phase 18.1
+production-readiness docs under [`docs/operations`](./docs/operations)).
 
 ### Never logged
 
@@ -356,13 +367,13 @@ application layer.
 
 ### Endpoints
 
-| Method & path | Auth | Notes |
-| --- | --- | --- |
-| `GET /api/v1/profiles/me` | authenticated | The caller's profile; `404` if none. |
-| `PATCH /api/v1/profiles/me` | authenticated | Updates `fullName` / `phoneNumber` only (the RLS-editable fields). |
-| `GET /api/v1/profiles/me/companies` | authenticated | Paginated list of companies the caller actively belongs to. |
-| `GET /api/v1/companies/:companyId/memberships` | `memberships.read` | Paginated, tenant-scoped list. |
-| `GET /api/v1/companies/:companyId/memberships/:membershipId` | `memberships.read` | Single membership, scoped to the company. |
+| Method & path                                                | Auth               | Notes                                                              |
+| ------------------------------------------------------------ | ------------------ | ------------------------------------------------------------------ |
+| `GET /api/v1/profiles/me`                                    | authenticated      | The caller's profile; `404` if none.                               |
+| `PATCH /api/v1/profiles/me`                                  | authenticated      | Updates `fullName` / `phoneNumber` only (the RLS-editable fields). |
+| `GET /api/v1/profiles/me/companies`                          | authenticated      | Paginated list of companies the caller actively belongs to.        |
+| `GET /api/v1/companies/:companyId/memberships`               | `memberships.read` | Paginated, tenant-scoped list.                                     |
+| `GET /api/v1/companies/:companyId/memberships/:membershipId` | `memberships.read` | Single membership, scoped to the company.                          |
 
 ### Profile resolution
 
@@ -397,17 +408,17 @@ database has **no** `roles`/`permissions`/`role_permissions` table (roles are th
 application-side "manageable default permission set". It is **strict and
 cited**: every grant traces to a specific RLS policy, an authorization predicate,
 or a documented business-rule flow; anything not cited is **not** granted (fail
-closed). An RLS *read* policy is never used to justify an unrelated write, and a
+closed). An RLS _read_ policy is never used to justify an unrelated write, and a
 role value the application does not recognize is dropped and logged (count only),
 never granted.
 
-| Role | Permissions | Basis |
-| --- | --- | --- |
-| `SUPER_ADMIN` | whole catalog | `private.is_super_admin()` short-circuits every RLS predicate. |
-| `COMPANY_MANAGER` | whole catalog | `private.can_manage_company()` + §7.2 ownership + manager business flows. |
-| `BRANCH_EMPLOYEE` | the read set only | company-scoped RLS *read* policies; no documented write. |
-| `AGENT` | read set **+** `bookings.create` | read policies + the agent as booking creator (`12-business-rules.md` §1). |
-| `PASSENGER` | none | reaches own resources by ownership, never a company-scoped permission. |
+| Role              | Permissions                      | Basis                                                                     |
+| ----------------- | -------------------------------- | ------------------------------------------------------------------------- |
+| `SUPER_ADMIN`     | whole catalog                    | `private.is_super_admin()` short-circuits every RLS predicate.            |
+| `COMPANY_MANAGER` | whole catalog                    | `private.can_manage_company()` + §7.2 ownership + manager business flows. |
+| `BRANCH_EMPLOYEE` | the read set only                | company-scoped RLS _read_ policies; no documented write.                  |
+| `AGENT`           | read set **+** `bookings.create` | read policies + the agent as booking creator (`12-business-rules.md` §1). |
+| `PASSENGER`       | none                             | reaches own resources by ownership, never a company-scoped permission.    |
 
 The **read set** is `companies.read`, `branches.read`, `staff.read`,
 `fleet.read`, `routes.read`, `trips.read`, `bookings.read`, `payments.read`,
@@ -431,8 +442,8 @@ added to `AuthorizationContext` (whose contract is unchanged).
 ### Branch-scoped authority (no permission/branch cross-product)
 
 The context's `permissions` and `branchAccess` are each a **caller-wide union**
-across memberships. They are correct for *company-scoped* decisions, but must
-**never be intersected** to make a *branch-scoped* one — that would form a
+across memberships. They are correct for _company-scoped_ decisions, but must
+**never be intersected** to make a _branch-scoped_ one — that would form a
 cross-product across memberships. Concretely: an `AGENT` scoped to Branch A
 (granting `bookings.create`) plus a `BRANCH_EMPLOYEE` scoped to Branch B
 (granting no create) would, under a naive `permissions ∩ branchAccess` check,
@@ -454,7 +465,7 @@ Branch-scoped decisions go through:
 A company-wide membership (manager/super-admin) reaches every branch, exactly
 because that role genuinely holds company-wide authority; a branch-scoped role's
 permissions never leak beyond its own branch. Phase 5 exposes no branch-scoped
-*endpoint* yet, so this is the mechanism a future branch-scoped policy uses; it
+_endpoint_ yet, so this is the mechanism a future branch-scoped policy uses; it
 is proven at the unit ([`entitlements.spec.ts`](./apps/backend/src/modules/identity/entitlements.spec.ts))
 and integration layers (permission from one membership is not exercisable in
 another's branch; an inactive membership contributes neither permission nor
@@ -497,20 +508,20 @@ All are nested under the tenant company (`:companyId`), matching the Phase 5
 convention. The global authorization guard resolves the caller's context for the
 company and enforces the declared permission before any handler runs.
 
-| Method & path | Permission | Notes |
-| --- | --- | --- |
-| `GET /api/v1/companies/:companyId/branches` | `branches.read` | Paginated; **branch-scoped** visibility (see below). |
-| `GET /api/v1/companies/:companyId/branches/:branchId` | `branches.read` | `404` when not in the company or not visible to the caller. |
-| `POST /api/v1/companies/:companyId/branches` | `branches.manage` | Create; `409` on duplicate names / invalid city. |
-| `PATCH /api/v1/companies/:companyId/branches/:branchId` | `branches.manage` | Update descriptive fields only. |
-| `POST /api/v1/companies/:companyId/branches/:branchId/activate` | `branches.manage` | Activation transition. |
-| `POST /api/v1/companies/:companyId/branches/:branchId/deactivate` | `branches.manage` | Deactivation transition. |
-| `GET /api/v1/companies/:companyId/staff-members` | `staff.read` | Paginated; **company-scoped**. |
-| `GET /api/v1/companies/:companyId/staff-members/:staffMemberId` | `staff.read` | `404` when not in the company. |
-| `POST /api/v1/companies/:companyId/staff-members` | `staff.manage` | Create (`DRIVER`/`ASSISTANT`). |
-| `PATCH /api/v1/companies/:companyId/staff-members/:staffMemberId` | `staff.manage` | Update fields only. |
-| `POST /api/v1/companies/:companyId/staff-members/:staffMemberId/activate` | `staff.manage` | Activation transition. |
-| `POST /api/v1/companies/:companyId/staff-members/:staffMemberId/deactivate` | `staff.manage` | Deactivation transition. |
+| Method & path                                                               | Permission        | Notes                                                       |
+| --------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------- |
+| `GET /api/v1/companies/:companyId/branches`                                 | `branches.read`   | Paginated; **branch-scoped** visibility (see below).        |
+| `GET /api/v1/companies/:companyId/branches/:branchId`                       | `branches.read`   | `404` when not in the company or not visible to the caller. |
+| `POST /api/v1/companies/:companyId/branches`                                | `branches.manage` | Create; `409` on duplicate names / invalid city.            |
+| `PATCH /api/v1/companies/:companyId/branches/:branchId`                     | `branches.manage` | Update descriptive fields only.                             |
+| `POST /api/v1/companies/:companyId/branches/:branchId/activate`             | `branches.manage` | Activation transition.                                      |
+| `POST /api/v1/companies/:companyId/branches/:branchId/deactivate`           | `branches.manage` | Deactivation transition.                                    |
+| `GET /api/v1/companies/:companyId/staff-members`                            | `staff.read`      | Paginated; **company-scoped**.                              |
+| `GET /api/v1/companies/:companyId/staff-members/:staffMemberId`             | `staff.read`      | `404` when not in the company.                              |
+| `POST /api/v1/companies/:companyId/staff-members`                           | `staff.manage`    | Create (`DRIVER`/`ASSISTANT`).                              |
+| `PATCH /api/v1/companies/:companyId/staff-members/:staffMemberId`           | `staff.manage`    | Update fields only.                                         |
+| `POST /api/v1/companies/:companyId/staff-members/:staffMemberId/activate`   | `staff.manage`    | Activation transition.                                      |
+| `POST /api/v1/companies/:companyId/staff-members/:staffMemberId/deactivate` | `staff.manage`    | Deactivation transition.                                    |
 
 ### Tenant isolation
 
@@ -532,10 +543,10 @@ member reads only the branch their membership is scoped to. This decision goes
 through the Phase 5 per-membership **entitlements**
 ([`branch-access.policy.ts`](./apps/backend/src/modules/branches/branch-access.policy.ts)),
 never the flat `permissions × branchAccess` union: `branches.read` is only ever
-paired with a branch the *same* membership reaches, so the Phase 5 cross-product
-defect cannot reappear. Branch *management* (`branches.manage`) is a company-wide
+paired with a branch the _same_ membership reaches, so the Phase 5 cross-product
+defect cannot reappear. Branch _management_ (`branches.manage`) is a company-wide
 permission held only by managers/super-admins, so there is no branch-scoped
-*write* in Phase 6; staff are company-scoped end to end (`staff.read` is
+_write_ in Phase 6; staff are company-scoped end to end (`staff.read` is
 `has_company_access`, `staff.manage` is company-wide). The coupling is proven at
 the unit (including a synthetic cross-product construction on the real policy),
 integration (RLS + service), and E2E (an employee cannot read a sibling branch)
@@ -582,33 +593,33 @@ four catalog/fleet modules.
 ### Ownership model (grounded in the schema + RLS)
 
 - **Cities, stations and seat layouts are global reference/template data**, not
-  tenant-owned. Their RLS read policies admit *any authenticated user*
+  tenant-owned. Their RLS read policies admit _any authenticated user_
   (`cities_read_active`, `stations_read_active`, `seat_layouts_read`), and there
   is **no `cities.*`/`stations.*`/`seat-layouts.*` permission** in the Phase 4
   catalog and no tenant column on the tables. They are therefore exposed as
   **read-only** catalog endpoints (authenticated, no permission required).
 - **Buses are company-owned.** Every bus query is scoped by `company_id`; buses
-  reference a *global* seat layout (`seat_layout_id`) and carry **no branch
+  reference a _global_ seat layout (`seat_layout_id`) and carry **no branch
   column**, so all fleet authorization is company-scoped `fleet.*` — there is no
   branch dimension in Phase 7 and thus no permission/branch cross-product to
   guard (the Phase 5 entitlement machinery is untouched and still active).
 
 ### Endpoints
 
-| Method & path | Permission | Notes |
-| --- | --- | --- |
-| `GET /api/v1/cities` | *(authenticated)* | Paginated; active cities only, stable id order. |
-| `GET /api/v1/cities/:cityId` | *(authenticated)* | `404` when absent/inactive. |
-| `GET /api/v1/stations` | *(authenticated)* | Paginated; active + non-deleted; optional `?cityId` filter. |
-| `GET /api/v1/stations/:stationId` | *(authenticated)* | `404` when absent/inactive/deleted. |
-| `GET /api/v1/seat-layouts` | *(authenticated)* | Paginated; global templates; exposes canonical seat labels. |
-| `GET /api/v1/seat-layouts/:seatLayoutId` | *(authenticated)* | `404` when absent. |
-| `GET /api/v1/companies/:companyId/buses` | `fleet.read` | Paginated; **company-scoped**. |
-| `GET /api/v1/companies/:companyId/buses/:busId` | `fleet.read` | `404` when not in the company. |
-| `POST /api/v1/companies/:companyId/buses` | `fleet.manage` | Create; `409` on duplicate plate / missing seat layout. |
-| `PATCH /api/v1/companies/:companyId/buses/:busId` | `fleet.manage` | Update descriptive fields + odometer; bumps `version`. |
-| `POST /api/v1/companies/:companyId/buses/:busId/activate` | `fleet.manage` | Activation transition. |
-| `POST /api/v1/companies/:companyId/buses/:busId/deactivate` | `fleet.manage` | Deactivation transition. |
+| Method & path                                               | Permission        | Notes                                                       |
+| ----------------------------------------------------------- | ----------------- | ----------------------------------------------------------- |
+| `GET /api/v1/cities`                                        | _(authenticated)_ | Paginated; active cities only, stable id order.             |
+| `GET /api/v1/cities/:cityId`                                | _(authenticated)_ | `404` when absent/inactive.                                 |
+| `GET /api/v1/stations`                                      | _(authenticated)_ | Paginated; active + non-deleted; optional `?cityId` filter. |
+| `GET /api/v1/stations/:stationId`                           | _(authenticated)_ | `404` when absent/inactive/deleted.                         |
+| `GET /api/v1/seat-layouts`                                  | _(authenticated)_ | Paginated; global templates; exposes canonical seat labels. |
+| `GET /api/v1/seat-layouts/:seatLayoutId`                    | _(authenticated)_ | `404` when absent.                                          |
+| `GET /api/v1/companies/:companyId/buses`                    | `fleet.read`      | Paginated; **company-scoped**.                              |
+| `GET /api/v1/companies/:companyId/buses/:busId`             | `fleet.read`      | `404` when not in the company.                              |
+| `POST /api/v1/companies/:companyId/buses`                   | `fleet.manage`    | Create; `409` on duplicate plate / missing seat layout.     |
+| `PATCH /api/v1/companies/:companyId/buses/:busId`           | `fleet.manage`    | Update descriptive fields + odometer; bumps `version`.      |
+| `POST /api/v1/companies/:companyId/buses/:busId/activate`   | `fleet.manage`    | Activation transition.                                      |
+| `POST /api/v1/companies/:companyId/buses/:busId/deactivate` | `fleet.manage`    | Deactivation transition.                                    |
 
 ### Tenant isolation (buses)
 
@@ -660,7 +671,7 @@ cross-company existence.
 ### Deferred to later phases
 
 - **Writes to global reference data** (`POST /stations`, `POST /seat-layouts`,
-  city management) — the guide lists them as *suggested*, but the Phase 4
+  city management) — the guide lists them as _suggested_, but the Phase 4
   permission catalog has no reference-data-management permission and the tables
   have no tenant scope, so implementing them would require fabricating a
   permission or letting tenant roles mutate globally-shared data. Deferred
@@ -680,17 +691,17 @@ port, Postgres adapter, and domain types.
 
 ### Endpoints
 
-| Method & path | Permission | Notes |
-| --- | --- | --- |
-| `GET/POST /api/v1/companies/:companyId/routes` | `routes.read` / `routes.manage` | Company-scoped; create validates active stations + seeds initial price. |
-| `GET/PATCH /api/v1/companies/:companyId/routes/:routeId` | `routes.read` / `routes.manage` | `404` cross-company; `422` invalid stations. |
-| `POST /api/v1/companies/:companyId/routes/:routeId/activate` \| `/deactivate` | `routes.manage` | `is_active` transition (`409` redundant). |
-| `GET /api/v1/companies/:companyId/routes/:routeId/price-history` | `routes.read` | Newest period first. |
-| `POST /api/v1/companies/:companyId/routes/:routeId/prices` | `routes.manage` | Appends a price (no dedicated pricing permission exists). |
-| `GET/POST /api/v1/companies/:companyId/trips` | `trips.read` / `trips.manage` | Company-scoped scheduling. |
-| `GET/PATCH /api/v1/companies/:companyId/trips/:tripId` | `trips.read` / `trips.manage` | Edit only while `SCHEDULED`; optimistic-locked. |
-| `POST /api/v1/companies/:companyId/trips/:tripId/start` \| `/complete` \| `/cancel` | `trips.manage` | Lifecycle transitions. |
-| `GET /api/v1/companies/:companyId/trips/:tripId/events` | `trips.read` | Append-only lifecycle log. |
+| Method & path                                                                       | Permission                      | Notes                                                                   |
+| ----------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- |
+| `GET/POST /api/v1/companies/:companyId/routes`                                      | `routes.read` / `routes.manage` | Company-scoped; create validates active stations + seeds initial price. |
+| `GET/PATCH /api/v1/companies/:companyId/routes/:routeId`                            | `routes.read` / `routes.manage` | `404` cross-company; `422` invalid stations.                            |
+| `POST /api/v1/companies/:companyId/routes/:routeId/activate` \| `/deactivate`       | `routes.manage`                 | `is_active` transition (`409` redundant).                               |
+| `GET /api/v1/companies/:companyId/routes/:routeId/price-history`                    | `routes.read`                   | Newest period first.                                                    |
+| `POST /api/v1/companies/:companyId/routes/:routeId/prices`                          | `routes.manage`                 | Appends a price (no dedicated pricing permission exists).               |
+| `GET/POST /api/v1/companies/:companyId/trips`                                       | `trips.read` / `trips.manage`   | Company-scoped scheduling.                                              |
+| `GET/PATCH /api/v1/companies/:companyId/trips/:tripId`                              | `trips.read` / `trips.manage`   | Edit only while `SCHEDULED`; optimistic-locked.                         |
+| `POST /api/v1/companies/:companyId/trips/:tripId/start` \| `/complete` \| `/cancel` | `trips.manage`                  | Lifecycle transitions.                                                  |
+| `GET /api/v1/companies/:companyId/trips/:tripId/events`                             | `trips.read`                    | Append-only lifecycle log.                                              |
 
 ### Route ownership & pricing history
 
@@ -833,11 +844,22 @@ immutable and `provider_reference` is write-once. A failed attempt is never
 reused — a retry is a new payment row (`Booking 1:N Payments`).
 
 **Provider abstraction.** Online settlement goes through a provider-neutral
-`PaymentProvider` port. Only a deterministic in-process **test** adapter is wired
-(HMAC-SHA256 over the raw webhook body, verified in constant time); real
-Bankily/Masrvi/Seddad adapters and their real secrets are **deferred** until
-their signature/payload contracts are documented. The port exposes only
-normalized internal concepts, so raw provider payloads never reach the domain.
+`PaymentProvider` port. Registration is controlled by `PAYMENTS_PROVIDER_MODE`
+(`disabled` | `test`): **production defaults to `disabled`** — no adapter is
+registered and every payment mutation (initiation, confirmation, refund, webhook)
+fails safely with `503 PAYMENT_PROVIDER_UNAVAILABLE` before touching state, and
+`test` is rejected by production config validation, and disabled mode requires no
+payment secret. Non-production defaults to `test`, wiring only the deterministic
+in-process adapter (HMAC-SHA256 over the raw webhook body, verified in constant
+time); test mode **requires** an explicit `PAYMENTS_TEST_WEBHOOK_SECRET` (no
+random/ephemeral fallback and no runtime default — missing/blank/placeholder/short
+fails startup), which automated suites supply via `test/setup-test-secret.ts` and
+local developers should set to a unique local-only value. Real Bankily/Masrvi/Seddad adapters and
+their real secrets are **deferred** until their signature/payload contracts are
+documented, so **real production payments remain BLOCKED** pending that work — an
+honest external/business integration blocker, not an infrastructure gap. The port
+exposes only normalized internal concepts, so raw provider payloads never reach
+the domain.
 CASH is confirmed in person by staff (`payments.confirm`); the confirmation and
 webhook success paths both drive the booking to `CONFIRMED` and its `HELD` seats
 to `CONFIRMED`, write `PAYMENT_CONFIRMED`, and are guarded against double
@@ -884,8 +906,8 @@ event; verify is read-only and reports a refunded booking as invalid.
 ### Scoping, RLS and exclusions
 
 Every payment/ticket query is explicitly scoped in SQL by passenger ownership
-(`booked_by_user_id` + `WEB`/`MOBILE_APP` channel) or by company + the *same
-membership's* branch entitlement — permissions are never unioned across
+(`booked_by_user_id` + `WEB`/`MOBILE_APP` channel) or by company + the _same
+membership's_ branch entitlement — permissions are never unioned across
 memberships. The one deliberately unscoped read is the signature-verified webhook
 lookup by unique `internal_reference`. RLS remains defense in depth: direct
 `authenticated` writes to `payments`/`tickets` are denied (`42501`) and
@@ -1013,7 +1035,7 @@ rendering, and boarding-device APIs beyond the documented `validate` operation.
   keys, cloud access keys, provider/CI tokens and credentialed remote DB URLs;
   local (single-label / 127.0.0.1) DB URLs are treated as documented fixtures.
 - **Dependency audit** (`pnpm security:audit` → `pnpm audit --prod
-  --audit-level high`). Fails on HIGH. Two HIGH transitive advisories (lodash
+--audit-level high`). Fails on HIGH. Two HIGH transitive advisories (lodash
   `_.template`, js-yaml merge-key) were **remediated by upgrading the direct
   dependency `@nestjs/swagger` from ^8.1.0 to ^11.4.6** (the NestJS-11-aligned
   major, which vendors patched lodash/js-yaml). Audit now reports no known
@@ -1060,5 +1082,38 @@ fixtures under `test/support/factories/`:
 ### Local verification vs remote
 
 All gates above are run and pass locally except the remote GitHub Actions
-execution, which cannot run without a push/PR. Phase 18 deployment remains
-explicitly out of scope.
+execution, which cannot run without a push/PR.
+
+## Phase 18.1: Production readiness (infrastructure)
+
+Container-based, **provider-neutral** production setup. No cloud provisioning and
+no deployment are included — those are Phase 18.2 / 18.3.
+
+- **Container:** multi-stage [`Dockerfile`](./Dockerfile) — Node 22
+  (`node:22.23.1-bookworm-slim`, pinned) + pnpm 11.9.0, frozen lockfile,
+  `pnpm deploy` for a production-only `node_modules`. Runtime image (~86 MB) is
+  non-root (`node`, uid 1000), exposes port 3000, uses an exec-form entrypoint,
+  ships a liveness-based `HEALTHCHECK`, and contains only `dist` + prod deps
+  (no `.env`, tests, `.git`, source, or local Supabase state — see
+  [`.dockerignore`](./.dockerignore)). Migrations are **not** run at build or
+  startup. Never publish/run `latest`.
+- **Fail-fast production config:** `assertProductionConfig`
+  (`apps/backend/src/config/production-config.validation.ts`) rejects unsafe
+  production configuration before listening (missing/localhost `DATABASE_URL`,
+  `sslmode=disable`, unresolved/non-https JWKS, `HS*`/`none` algorithms, empty or
+  wildcard CORS, invalid body/rate/pool/timeout values, missing or placeholder
+  webhook secret) with a secret-free, DB-URL-redacted error.
+- **Lifecycle:** liveness is process-only (DB-independent); readiness runs a
+  bounded DB probe and fails safe (`503`) with no leakage; graceful `SIGTERM`
+  shutdown closes the pool.
+- **Local smoke test:** [`scripts/smoke-container.sh`](./scripts/smoke-container.sh)
+  builds the image and runs 15 checks against a **disposable local** database
+  (non-root, fail-fast, liveness, readiness, route protection, Swagger-off,
+  graceful shutdown, no secret in logs). It never uses a shared/production DB and
+  never publishes the image.
+- **Operations docs:** [`docs/operations/`](./docs/operations) — discovery
+  report, provider-neutral deployment requirements + decision matrix (hosting
+  platform is an **open decision**), and the production runbook.
+
+Phase 18.2 (deploy/CD/registry/migration execution) and Phase 18.3 (cloud
+provisioning/DNS/TLS/backups/monitoring) remain **not started**.

@@ -71,8 +71,14 @@ export class PaymentNotRefundableError extends PaymentHttpError {
 
 /** The requested method cannot be used for this operation (e.g. confirming a non-cash payment). */
 export class PaymentMethodNotAllowedError extends PaymentHttpError {
-  constructor(message = 'The payment method is not allowed for this operation.') {
-    super(ErrorCode.PAYMENT_METHOD_NOT_ALLOWED, message, HttpStatus.UNPROCESSABLE_ENTITY);
+  constructor(
+    message = 'The payment method is not allowed for this operation.',
+  ) {
+    super(
+      ErrorCode.PAYMENT_METHOD_NOT_ALLOWED,
+      message,
+      HttpStatus.UNPROCESSABLE_ENTITY,
+    );
   }
 }
 
@@ -126,6 +132,23 @@ export class PaymentReferenceUnavailableError extends PaymentHttpError {
     super(
       ErrorCode.DEPENDENCY_FAILURE,
       'A payment reference could not be allocated. Please retry.',
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  }
+}
+
+/**
+ * No payment provider is enabled, so every payment mutation (initiation,
+ * confirmation, refund, webhook) fails safely without touching any state. This
+ * is the production default until a real provider adapter and credentials are
+ * supplied — an honest external/business integration blocker, not an outage.
+ * The message is deliberately generic and leaks no configuration.
+ */
+export class PaymentProviderUnavailableError extends PaymentHttpError {
+  constructor() {
+    super(
+      ErrorCode.PAYMENT_PROVIDER_UNAVAILABLE,
+      'Payment processing is currently unavailable.',
       HttpStatus.SERVICE_UNAVAILABLE,
     );
   }

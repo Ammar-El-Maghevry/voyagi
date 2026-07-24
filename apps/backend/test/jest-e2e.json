@@ -3,7 +3,11 @@
   "rootDir": "..",
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
-  "setupFiles": ["reflect-metadata", "<rootDir>/test/setup-e2e.ts"],
+  "setupFiles": [
+    "reflect-metadata",
+    "<rootDir>/test/setup-e2e.ts",
+    "<rootDir>/test/setup-test-secret.ts"
+  ],
   "transform": {
     "^.+\\.ts$": ["ts-jest", { "tsconfig": "<rootDir>/tsconfig.json" }]
   }

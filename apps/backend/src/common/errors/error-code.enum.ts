@@ -37,6 +37,12 @@ export enum ErrorCode {
   PAYMENT_NOT_REFUNDABLE = 'PAYMENT_NOT_REFUNDABLE',
   PAYMENT_METHOD_NOT_ALLOWED = 'PAYMENT_METHOD_NOT_ALLOWED',
   WEBHOOK_SIGNATURE_INVALID = 'WEBHOOK_SIGNATURE_INVALID',
+  /**
+   * No payment provider is configured/enabled (production defaults payments to
+   * `disabled` until a real provider adapter and credentials are supplied). All
+   * payment mutations fail safely with this stable code.
+   */
+  PAYMENT_PROVIDER_UNAVAILABLE = 'PAYMENT_PROVIDER_UNAVAILABLE',
   // Phase 13 — Tickets.
   TICKET_NOT_ISSUABLE = 'TICKET_NOT_ISSUABLE',
   TICKET_ALREADY_ISSUED = 'TICKET_ALREADY_ISSUED',
